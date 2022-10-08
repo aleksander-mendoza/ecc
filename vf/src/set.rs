@@ -1,5 +1,11 @@
-use num_traits::AsPrimitive;
-use std::ops::Range;
+use std::collections::HashSet;
+use std::fmt::Debug;
+use std::hash::Hash;
+use std::iter::Step;
+use num_traits::{AsPrimitive, NumAssignOps, PrimInt, Zero};
+use std::ops::{Add, AddAssign, Range, Rem, Sub};
+use rand::distributions::{Distribution, Standard};
+use crate::from_usize::FromUsize;
 
 pub trait SetCardinality {
     /**Set cardinality is the number of its member elements*/
@@ -34,11 +40,11 @@ pub trait SetSparseIndexArray {
 }
 
 pub trait SetSparseMask {
-    fn mask<T>(&self, destination:&mut [T], f:impl Fn(&mut T));
+    fn mask<T>(&self, destination: &mut [T], f: impl Fn(&mut T));
 }
 
 pub trait SetSparseParallelMask {
-    fn mask_par<T>(&self, destination:&mut [T], f:impl Fn(&mut T)+Send+Sync);
+    fn mask_par<T>(&self, destination: &mut [T], f: impl Fn(&mut T) + Send + Sync);
 }
 
 // pub trait SetSparseRand<T> {
@@ -183,58 +189,46 @@ impl<N: Ord + Copy> SetSubtract for Vec<N> {
     }
 }
 
-impl<N: AsPrimitive<usize>+Copy> SetSparseMask for [N] {
+impl<N: AsPrimitive<usize> + Copy> SetSparseMask for [N] {
     fn mask<T>(&self, destination: &mut [T], f: impl Fn(&mut T)) {
         for i in self {
             f(&mut destination[i.as_()])
         }
     }
 }
-impl<N: AsPrimitive<usize>+Copy> SetSparseIndexArray for Vec<N>{
+
+impl<N: AsPrimitive<usize> + Copy> SetSparseIndexArray for Vec<N> {
     fn normalize(&mut self) -> &mut Self {
-        self.sort_by_key(|a|a.as_());
-        self.dedup_by_key(|a|a.as_());
+        self.sort_by_key(|a| a.as_());
+        self.dedup_by_key(|a| a.as_());
         self
     }
 
     fn is_normalized(&self) -> bool {
-        self.windows(2).all(|a|a[0].as_()<a[0].as_())
+        self.windows(2).all(|a| a[0].as_() < a[0].as_())
     }
 }
-// impl<N: AsPrimitive<usize>+Copy> SetSparseParallelMask for [N] {
-//     fn mask_par<T>(&self, destination: &mut [T], f: impl Fn(&mut T)+Send+Sync) {
-//         let len = destination.len();
-//         let ptr = destination.as_mut_ptr() as usize;
-//         self.par_iter().for_each(|i:&N| {
-//             let s = unsafe { std::slice::from_raw_parts_mut(ptr as *mut T, len) };
-//             f(&mut s[i.as_()])
-//         })
-//     }
-// }
 
-// impl SetSparseRand<T> for Vec<N>{
-//     pub fn add_unique_random(&mut self, n: u32, range: Range<u32>) {
-//         let len = range.end - range.start;
-//         assert!(len >= n, "The range of values {}..{} has {} elements. Can't get unique {} elements out of it!", range.start, range.end, len, n);
-//         let mut set = HashSet::new();
-//         for _ in 0..n {
-//             let mut r = range.start + rand::random::<u32>() % len;
-//             while !set.insert(r) {
-//                 r += 1;
-//                 if r >= range.end {
-//                     r = range.start;
-//                 }
-//             }
-//             self.push(r);
-//         }
-//     }
-//
-//     pub fn rand(cardinality: Idx, size: Idx) -> Self {
-//         assert!(cardinality <= size);
-//         let mut s = Self::with_capacity(cardinality.as_usize());
-//         s.add_unique_random(cardinality, 0..size);
-//         s
-//     }
+pub fn add_unique_random<N: PrimInt+NumAssignOps+AsPrimitive<usize>+Step+Hash>(collector:&mut Vec<N>, n: N, range: Range<N>) where Standard: Distribution<N>{
+    let len = range.end - range.start;
+    assert!(len >= n);
+    let mut set = HashSet::new();
+    for _ in N::zero()..n {
+        let mut r = range.start + rand::random::<N>() % len;
+        while !set.insert(r) {
+            r += N::one();
+            if r >= range.end {
+                r = range.start;
+            }
+        }
+        collector.push(r);
+    }
+}
+pub fn rand_set<N:PrimInt+AsPrimitive<usize>+Step+Hash+NumAssignOps>(cardinality: N, range: Range<N>) -> Vec<N> where Standard: Distribution<N>{
+    let mut s = Vec::with_capacity(cardinality.as_());
+    add_unique_random(&mut s,cardinality, range);
+    s
+}
 //     /**Randomly picks some neurons that a present in other SDR but not in self SDR.
 //     Requires that both SDRs are already normalized.
 //     It will only add so many elements so that self.len() <= n*/
@@ -280,12 +274,36 @@ impl<N: AsPrimitive<usize>+Copy> SetSparseIndexArray for Vec<N>{
 //
 // }
 
+/**Returns a single vector containing indices of all true boolean values.
+The second vector contains offsets to the first one. It works just like Vec<Vec<Idx>> but is flattened.*/
+pub fn batch_dense_to_sparse<Idx: FromUsize>(batch_size: usize, bools: &[bool]) -> (Vec<Idx>, Vec<usize>) {
+    assert_eq!(bools.len() % batch_size, 0);
+    let mut from = 0;
+    let mut indices = Vec::<Idx>::new();
+    let mut offsets = Vec::<usize>::with_capacity(bools.len() / batch_size);
+    while from < bools.len() {
+        let to = from + batch_size;
+        dense_to_sparse_(&bools[from..to], &mut indices);
+        offsets.push(to);
+        from = to;
+    }
+    (indices, offsets)
+}
+
+pub fn dense_to_sparse_<Idx: FromUsize>(bools: &[bool], output: &mut Vec<Idx>) {
+    bools.iter().cloned().enumerate().filter(|(_, b)| *b).map(|(i, _)| Idx::from_usize(i)).collect_into(output);
+}
+
+pub fn dense_to_sparse<Idx: FromUsize>(bools: &[bool]) -> Vec<Idx> {
+    let mut v = Vec::<Idx>::new();
+    dense_to_sparse_(bools, &mut v);
+    v
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use rand::SeedableRng;
-
 
 
     #[test]
@@ -374,5 +392,4 @@ mod tests {
         assert_eq!(subtract(&[1, 5, 6, 76], &[53, 746, 6, 1, 5, 78, 3, 6, 7]).as_slice(), &[76]);
         Ok(())
     }
-
 }

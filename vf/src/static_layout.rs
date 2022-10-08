@@ -1,5 +1,5 @@
 use std::ops::Range;
-use crate::init::{empty, init_fold_rev};
+use crate::init::{empty};
 use crate::{VectorField, VectorFieldOne};
 
 pub type Shape<const DIM: usize> = [usize; DIM];

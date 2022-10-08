@@ -4,7 +4,7 @@ import torchvision
 import matplotlib.pyplot as plt
 import numpy as np
 
-MNIST = torchvision.datasets.MNIST('../data/', train=False, download=True)
+MNIST = torchvision.datasets.MNIST('../../data/', train=False, download=True)
 MNIST = MNIST.data.numpy()
 PATCH_SIZE = np.array([5, 5])
 w, h = 5, 4
@@ -15,7 +15,6 @@ U = np.float32(np.random.rand(y_len, y_len))
 W_epsilon = 0.0001
 U_epsilon = 0.001
 threshold = 0.1
-k = 10
 
 
 def rand_patch():
@@ -34,16 +33,16 @@ def run(x, learn):
     global W, U
     s = x @ W
     y = (s > threshold).view(np.ubyte) * 2
-    top_U = np.argpartition(U, kth=-k, axis=1)[:, -k:]
-    binary_U = np.zeros_like(U)
-    np.put_along_axis(binary_U, top_U, 1, 1)
-    ecc_py.soft_wta_top_u_real_(binary_U, s, y)
+    ecc_py.soft_wta_u_(U, s, y)
     y = y.view(bool)
     if learn:
         W[np.ix_(x, y)] += W_epsilon
         W = W / W.sum(0)
-        U[y] *= 1 - U_epsilon
-        U[y] += s*U_epsilon
+        sk = np.tile(s[y], (y_len,1)).T
+        sk_minus_sj = sk - s
+        mask = sk_minus_sj > 0
+        U[y] *= 1 - mask * U_epsilon
+        U[y] += mask * abs(sk_minus_sj*U_epsilon)
         if sum(s) > 0:
             print(sum(y))
     return y

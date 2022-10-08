@@ -1,8 +1,8 @@
-use std::ops::{Add, Mul};
+use std::ops::{Add, DivAssign, Mul};
 use std::process::Output;
 use num_traits::{AsPrimitive, FromPrimitive, Pow, Zero};
 use crate::from_usize::FromUsize;
-use crate::VectorFieldZero;
+use crate::{VectorFieldDivAssign, VectorFieldZero};
 
 pub trait Norm{
     type Output;
@@ -66,14 +66,14 @@ impl Norm for [f32]{
     type Output = f32;
 
     fn norm(&self) -> Self::Output {
-        l2(self)
+        l2(self, 1)
     }
 }
 impl Norm for [f64]{
     type Output = f64;
 
     fn norm(&self) -> Self::Output {
-        l2(self)
+        l2(self, 1)
     }
 }
 
@@ -82,16 +82,46 @@ impl Norm for [f64]{
 pub fn card<D:FromUsize>(vec:&[D]) ->D{
     D::from_usize(vec.len())
 }
-pub fn l1<E:Add<Output=E>+Zero, D:Norm<Output=E>>(vec:&[D]) ->E{
-    vec.iter().map(|f|f.norm()).fold(E::zero(),|a,b|a+b)
+
+pub fn l0<D:Zero+FromUsize>(vec:&[D], stride:usize) ->D{
+    D::from_usize(vec.iter().step_by(stride).filter(|f|!f.is_zero()).count())
+}
+pub fn l1<E:Add<Output=E>+Zero, D:Norm<Output=E>>(vec:&[D], stride:usize) ->E{
+    vec.iter().step_by(stride).map(|f|f.norm()).fold(E::zero(),|a,b|a+b)
 }
 
-pub fn l2<D:Copy+Add<Output=D>+Zero + Mul<Output=D>>(vec:&[D]) ->D{
-    vec.iter().fold(D::zero(),|a,b|a+*b* *b)
+pub fn l2<D:Copy+Add<Output=D>+Zero + Mul<Output=D>>(vec:&[D], stride:usize) ->D{
+    vec.iter().step_by(stride).fold(D::zero(),|a,b|a+*b* *b)
 }
 
-pub fn l3<E:Add<Output=E>+Zero+Mul<Output=E>+Copy, D:Norm<Output=E>>(vec:&[D]) ->E{
-    vec.iter().map(|f|f.norm()).fold(E::zero(),|a,b|a+b* b* b)
+pub fn l3<E:Add<Output=E>+Zero+Mul<Output=E>+Copy, D:Norm<Output=E>>(vec:&[D], stride:usize) ->E{
+    vec.iter().step_by(stride).map(|f|f.norm()).fold(E::zero(),|a,b|a+b* b* b)
 }
 
-
+/**C-contiguous matrix of shape [height, width]. Stride is equal to width. This function normalizes all columns*/
+pub fn normalize_mat_columns<D: DivAssign+Copy>(width:usize, matrix: &mut [D], norm_with_stride:impl Fn(&[D], usize)->D){
+    for j in 0..width{
+        let modulo_equivalence_class = &mut matrix[j..];
+        let n = norm_with_stride(modulo_equivalence_class, width);
+        modulo_equivalence_class.iter_mut().step_by(width).for_each(|w|*w /= n);
+    }
+}
+/**C-contiguous matrix of shape [height, width]. Stride is equal to width. This function normalizes all rows*/
+pub fn normalize_mat_rows<D: DivAssign+Copy>(width:usize, matrix: &mut [D], norm_with_stride:impl Fn(&[D], usize)->D){
+    let mut from = 0;
+    while from < matrix.len(){
+        let to = from + width;
+        let row = &mut matrix[from..to];
+        row.div_scalar_(norm_with_stride(row, 1));
+        from = to;
+    }
+}
+pub fn ln<D:Norm<Output=D>+Add<Output=D>+Zero+Mul<Output=D>+Copy+FromUsize>(n:usize)->fn(&[D],usize)->D{
+    match n {
+        0 => l0,
+        1 => l1,
+        2 => l2,
+        3 => l3,
+        _ => panic!("Unknown norm")
+    }
+}

@@ -4,20 +4,28 @@ use num_traits::{Zero, One, Num, AsPrimitive, NumAssign};
 use rand::Rng;
 use rand::distributions::{Standard, Distribution};
 use crate::*;
-use crate::init::InitEmptyWithCapacity;
+use crate::init::{UninitEmptyWithCapacity, InitEmptyWithCapacity};
 
-impl<T: Copy> VectorField<T> for [T] {
+impl<T> VectorField<T> for [T] {
     #[inline]
-    fn fold<I>(&self, zero: I, mut f: impl FnMut(I, T) -> I) -> I {
-        self.iter().fold(zero, |a, b| f(a, *b))
+    fn fold<I>(&self, zero: I, mut f: impl FnMut(I, &T) -> I) -> I {
+        self.iter().fold(zero, |a, b| f(a, b))
     }
 
-    fn rfold<I>(&self, zero: I, mut f: impl FnMut(I, T) -> I) -> I {
-        self.iter().rfold(zero, |a, b| f(a, *b))
+    fn rfold<I>(&self, zero: I, mut f: impl FnMut(I, &T) -> I) -> I {
+        self.iter().rfold(zero, |a, b| f(a, b))
     }
 
     fn fold_<I>(&mut self, zero: I, mut f: impl FnMut(I, &mut T) -> I) -> I {
         self.iter_mut().fold(zero, |a, b| f(a, b))
+    }
+
+    fn enumerate_fold_<I>(&mut self, zero: I, mut f: impl FnMut(usize, I, &mut T) -> I) -> I {
+        self.iter_mut().enumerate().fold(zero, |a, (i,b)| f(i, a, b))
+    }
+
+    fn enumerate_rfold_<I>(&mut self, zero: I, mut f: impl FnMut(usize, I, &mut T) -> I) -> I {
+        self.iter_mut().enumerate().rfold(zero, |a, (i,b)| f(i, a, b))
     }
 
     fn rfold_<I>(&mut self, zero: I, mut f: impl FnMut(I, &mut T) -> I) -> I {
@@ -29,56 +37,58 @@ impl<T: Copy> VectorField<T> for [T] {
         self
     }
     #[inline]
-    fn all(&self, mut f: impl FnMut(T) -> bool) -> bool {
-        self.iter().cloned().all(f)
+    fn all(&self, mut f: impl FnMut(&T) -> bool) -> bool {
+        self.iter().all(f)
     }
 
     #[inline]
-    fn any(&self, mut f: impl FnMut(T) -> bool) -> bool {
-        self.iter().cloned().any(f)
+    fn any(&self, mut f: impl FnMut(&T) -> bool) -> bool {
+        self.iter().any(f)
     }
 
     #[inline]
-    fn all_zip(&self, other: &Self, mut f: impl FnMut(T, T) -> bool) -> bool {
-        self.iter().zip(other.iter()).all(|(&a, &b)| f(a, b))
+    fn all_zip(&self, other: &Self, mut f: impl FnMut(&T, &T) -> bool) -> bool {
+        self.iter().zip(other.iter()).all(|(a, b)| f(a, b))
     }
     #[inline]
-    fn any_zip(&self, other: &Self, mut f: impl FnMut(T, T) -> bool) -> bool {
-        self.iter().zip(other.iter()).any(|(&a, &b)| f(a, b))
+    fn any_zip(&self, other: &Self, mut f: impl FnMut(&T, &T) -> bool) -> bool {
+        self.iter().zip(other.iter()).any(|(a, b)| f(a, b))
     }
-    fn zip_(&mut self, other: &Self, mut f: impl FnMut(&mut T, T)) -> &mut Self {
-        self.iter_mut().zip(other.iter().cloned()).for_each(|(a, b)| f(a, b));
+    fn zip_(&mut self, other: &Self, mut f: impl FnMut(&mut T, &T)) -> &mut Self {
+        self.iter_mut().zip(other.iter()).for_each(|(a, b)| f(a, b));
         self
     }
     type O = Vec<T>;
     #[inline]
-    fn map(&self, mut f: impl FnMut(T) -> T) -> Self::O {
-        self.iter().cloned().map(f).collect()
+    fn map(&self, mut f: impl FnMut(&T) -> T) -> Self::O {
+        self.iter().map(f).collect()
     }
 
     #[inline]
-    fn zip(&self, other: &Self, mut f: impl FnMut(T, T) -> T) -> Self::O {
-        self.iter().cloned().zip(other.iter().cloned()).map(|(a, b)| f(a, b)).collect()
+    fn zip(&self, other: &Self, mut f: impl FnMut(&T, &T) -> T) -> Self::O {
+        self.iter().zip(other.iter()).map(|(a, b)| f(a, b)).collect()
     }
 
-    fn fold_map<D>(&self, mut zero: D, mut f: impl FnMut(D, T) -> (D, T)) -> (D, Self::O) {
-        let mut arr = Vec::empty(self.len());
-        for (i, j) in self.iter().cloned().zip(arr.iter_mut()) {
+    fn fold_map<D>(&self, mut zero: D, mut f: impl FnMut(D, &T) -> (D, T)) -> (D, Self::O) {
+        let mut arr = Vec::with_capacity(self.len());
+        for i in self {
             let (z, a) = f(zero, i);
             zero = z;
-            *j = a;
+            arr.push(a);
         }
         (zero, arr)
     }
 
-    fn rfold_map<D>(&self, mut zero: D, mut f: impl FnMut(D, T) -> (D, T)) -> (D, Self::O) {
-        let mut arr = Vec::empty(self.len());
-        for (i, j) in self.iter().rev().cloned().zip(arr.iter_mut().rev()) {
-            let (z, a) = f(zero, i);
-            zero = z;
-            *j = a;
+    fn rfold_map<D>(&self, mut zero: D, mut f: impl FnMut(D, &T) -> (D, T)) -> (D, Self::O) {
+        unsafe {
+            let mut arr = Vec::empty_uninit(self.len());
+            for (i, j) in self.iter().rev().zip(arr.iter_mut().rev()) {
+                let (z, a) = f(zero, i);
+                zero = z;
+                std::ptr::write(j as *mut T, a);
+            }
+            (zero, arr)
         }
-        (zero, arr)
     }
 }
 

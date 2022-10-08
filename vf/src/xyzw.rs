@@ -1,3 +1,8 @@
+pub fn xy_z_w4<D>(xy: [D; 2], z: D, w: D) -> [D; 4] {
+    let [x, y] = xy;
+    [x, y, z, w]
+}
+
 pub fn xy_zw4<D>(xy: [D; 2], zw: [D; 2]) -> [D; 4] {
     let [x, y] = xy;
     let [z, w] = zw;

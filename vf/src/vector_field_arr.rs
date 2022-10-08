@@ -4,19 +4,28 @@ use std::mem::MaybeUninit;
 use num_traits::{Zero, One, Num, AsPrimitive, NumAssign};
 use rand::Rng;
 use rand::distributions::{Standard, Distribution};
-use crate::init::empty;
+use crate::init::{empty, empty_uninit};
 
-impl<T: Copy, const DIM: usize> VectorField<T> for [T; DIM] {
-    fn fold<D>(&self, zero: D, mut f: impl FnMut(D, T) -> D) -> D {
-        self.iter().fold(zero, |a, b| f(a, *b))
+
+impl<T, const DIM: usize> VectorField<T> for [T; DIM] {
+    fn fold<D>(&self, zero: D, mut f: impl FnMut(D, &T) -> D) -> D {
+        self.iter().fold(zero, |a, b| f(a, b))
     }
 
-    fn rfold<D>(&self, zero: D, mut f: impl FnMut(D, T) -> D) -> D {
-        self.iter().rfold(zero, |a, b| f(a, *b))
+    fn rfold<D>(&self, zero: D, mut f: impl FnMut(D, &T) -> D) -> D {
+        self.iter().rfold(zero, |a, b| f(a, b))
     }
 
     fn fold_<D>(&mut self, zero: D, mut f: impl FnMut(D, &mut T) -> D) -> D {
         self.iter_mut().fold(zero, |a, b| f(a, b))
+    }
+
+    fn enumerate_fold_<D>(&mut self, zero: D, mut f: impl FnMut(usize, D, &mut T) -> D) -> D {
+        self.iter_mut().enumerate().fold(zero, |a, (i,b)| f(i, a, b))
+    }
+
+    fn enumerate_rfold_<D>(&mut self, zero: D, mut f: impl FnMut(usize, D, &mut T) -> D) -> D {
+        self.iter_mut().enumerate().rfold(zero, |a,(i, b)| f(i, a, b))
     }
 
     fn rfold_<D>(&mut self, zero: D, mut f: impl FnMut(D, &mut T) -> D) -> D {
@@ -28,71 +37,63 @@ impl<T: Copy, const DIM: usize> VectorField<T> for [T; DIM] {
         self
     }
     #[inline]
-    fn all(&self, mut f: impl FnMut(T) -> bool) -> bool {
-        self.iter().cloned().all(f)
+    fn all(&self, mut f: impl FnMut(&T) -> bool) -> bool {
+        self.iter().all(f)
     }
 
     #[inline]
-    fn any(&self, mut f: impl FnMut(T) -> bool) -> bool {
-        self.iter().cloned().any(f)
+    fn any(&self, mut f: impl FnMut(&T) -> bool) -> bool {
+        self.iter().any(f)
     }
 
 
     #[inline]
-    fn all_zip(&self, other: &Self, mut f: impl FnMut(T, T) -> bool) -> bool {
-        self.iter().zip(other.iter()).all(|(&a, &b)| f(a, b))
+    fn all_zip(&self, other: &Self, mut f: impl FnMut(&T, &T) -> bool) -> bool {
+        self.iter().zip(other.iter()).all(|(a, b)| f(a, b))
     }
     #[inline]
-    fn any_zip(&self, other: &Self, mut f: impl FnMut(T, T) -> bool) -> bool {
-        self.iter().zip(other.iter()).any(|(&a, &b)| f(a, b))
+    fn any_zip(&self, other: &Self, mut f: impl FnMut(&T, &T) -> bool) -> bool {
+        self.iter().zip(other.iter()).any(|(a, b)| f(a, b))
     }
-    fn zip_(&mut self, other: &Self, mut f: impl FnMut(&mut T, T)) -> &mut Self {
-        self.iter_mut().zip(other.iter().cloned()).for_each(|(a, b)| f(a, b));
+    fn zip_(&mut self, other: &Self, mut f: impl FnMut(&mut T, &T)) -> &mut Self {
+        self.iter_mut().zip(other.iter()).for_each(|(a, b)| f(a, b));
         self
     }
     type O = Self;
     #[inline]
-    fn map(&self, mut f: impl FnMut(T) -> T) -> Self {
-        let mut arr: [T; DIM] = empty();
-        for i in 0..DIM {
-            arr[i] = f(self[i]);
-        }
-        arr
+    fn map(&self, mut f: impl FnMut(&T) -> T) -> Self {
+        map_arr(self,f)
     }
 
     #[inline]
-    fn zip(&self, other: &Self, mut f: impl FnMut(T, T) -> T) -> Self {
-        let mut arr: [T; DIM] = empty();
-        for i in 0..DIM {
-            arr[i] = f(self[i], other[i]);
-        }
-        arr
+    fn zip(&self, other: &Self, mut f: impl FnMut(&T, &T) -> T) -> Self {
+        zip_arr(self,other,f)
     }
 
-    fn fold_map<D>(&self, mut zero: D, mut f: impl FnMut(D, T) -> (D, T)) -> (D, Self::O) {
-        let mut arr: [T; DIM] = empty();
+    fn fold_map<D>(&self, mut zero: D, mut f: impl FnMut(D, &T) -> (D, T)) -> (D, Self::O) {
+        let mut arr: [MaybeUninit<T>; DIM] = MaybeUninit::uninit_array();
         for i in 0..DIM {
-            let (z, a) = f(zero, self[i]);
+            let (z, a) = f(zero, &self[i]);
             zero = z;
-            arr[i] = a;
+            arr[i].write(a);
         }
-        (zero, arr)
+        (zero, unsafe{MaybeUninit::array_assume_init(arr)})
     }
 
-    fn rfold_map<D>(&self, mut zero: D, mut f: impl FnMut(D, T) -> (D, T)) -> (D, Self::O) {
-        let mut arr: [T; DIM] = empty();
+    fn rfold_map<D>(&self, mut zero: D, mut f: impl FnMut(D, &T) -> (D, T)) -> (D, Self::O) {
+        let mut arr: [MaybeUninit<T>; DIM] = MaybeUninit::uninit_array();
         for i in (0..DIM).rev() {
-            let (z, a) = f(zero, self[i]);
+            let (z, a) = f(zero, &self[i]);
             zero = z;
-            arr[i] = a;
+            arr[i].write(a);
         }
-        (zero, arr)
+        (zero, unsafe{MaybeUninit::array_assume_init(arr)})
     }
 }
 
 impl<T: Copy, const DIM: usize> VectorFieldOwned<T> for [T; DIM] {
     fn _map(mut self, mut f: impl FnMut(T) -> T) -> Self {
-        self.iter_mut().for_each(|e|*e = f(*e));
+        self.iter_mut().for_each(|e| *e = f(*e));
         self
     }
     fn _zip(mut self, other: &Self, mut f: impl FnMut(T, T) -> T) -> Self {
@@ -194,6 +195,12 @@ impl<T: Copy, const DIM: usize> VectorFieldRngAssign<T> for [T; DIM] where Stand
         self
     }
 }
+
+impl<T: Copy, const DIM: usize> VectorFieldFull<T> for [T; DIM] {}
+
+impl<T: Copy + Zero, const DIM: usize> VectorFieldInitZero<T> for [T; DIM] {}
+
+impl<T: Copy + One, const DIM: usize> VectorFieldInitOne<T> for [T; DIM] {}
 
 // pub fn rand_vec(&self, rng: &mut impl rand::Rng)->Self{
 //     let mut s:[T;DIM] = empty();

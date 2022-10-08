@@ -1,7 +1,54 @@
 use std::cmp::Ordering::{Greater, Less};
+use std::iter::Step;
+use std::ops::{Add, Mul};
 use itertools::Itertools;
+use num_traits::{AsPrimitive, One, Zero};
+use crate::conv_shape::{channels, height, width};
+use crate::shape::Shape;
+use crate::VectorFieldOne;
+use crate::xyzw::z3;
 
 pub const NULL:u8 = 2;
+
+/**shape of s is [height, width, channels], shape of v is [channels, channels],
+ shape of y is [height, width, channels]. u is C-contiguous.
+ Element s[k,j]==0 means neuron k (row) can inhibit neuron j (column).*/
+pub fn top_v_repeated_conv_(y_shape:&[usize;3], v:&[bool], s:&[f32], y:&mut [u8]){
+    let m = y_shape.product();
+    let c = channels(y_shape).clone();
+    assert_eq!(y.len(),m);
+    assert_eq!(s.len(),m);
+    assert_eq!(v.len(),m*c);
+    for j0 in 0..y_shape[0]{
+        for j1 in 0..y_shape[1]{
+            let y_from_j = (j0*c+j1)*c;
+            let y_to_j = y_from_j+c;
+            top_v_slice_(&v,&s[y_from_j..y_to_j],&mut y[y_from_j..y_to_j])
+        }
+    }
+
+}
+
+/**shape of s is [height, width, channels], shape of v is [height, width, channels, channels],
+ shape of y is [height, width, channels]. u is C-contiguous.
+ Element s[y,x,k,j]==1 means neuron k (row) can inhibit neuron j (column) within the minicolumn at position [y,x].*/
+pub fn top_v_conv_(y_shape:&[usize;3], v:&[bool], s:&[f32], y:&mut [u8]){
+    let m = y_shape.product();
+    let c = channels(y_shape).clone();
+    assert_eq!(y.len(),m);
+    assert_eq!(s.len(),m);
+    assert_eq!(v.len(),c*c);
+    for j0 in 0..y_shape[0]{
+        for j1 in 0..y_shape[1]{
+            let y_from_j = (j0*c+j1)*c;
+            let y_to_j = y_from_j+c;
+            let v_from_j = y_from_j*c;
+            let v_to_j = v_from_j+c*c;
+            top_v_slice_(&v[v_from_j..v_to_j],&s[y_from_j..y_to_j],&mut y[y_from_j..y_to_j])
+        }
+    }
+
+}
 
 /**u is row-major. Element v[k,j]==1 means neuron k (row) can inhibit neuron j (column). */
 pub fn top_v_slice(v:&[bool], s:&[f32]) ->Vec<bool>{
@@ -35,6 +82,44 @@ pub fn top_v_(v:impl Fn(usize,usize)->bool,s:&[f32], y:&mut [u8]){
     debug_assert!(!y.contains(&NULL));
 }
 
+/**shape of s is [height, width, channels], shape of u is [channels, channels],
+ shape of y is [height, width, channels]. u is C-contiguous.
+ Element s[k,j]==0 means neuron k (row) can inhibit neuron j (column).*/
+pub fn top_u_repeated_conv_(y_shape:&[usize;3], u:&[f32], s:&[f32], y:&mut [u8]){
+    let m = y_shape.product();
+    let c = channels(y_shape).clone();
+    assert_eq!(y.len(),m);
+    assert_eq!(s.len(),m);
+    assert_eq!(u.len(),c*c);
+    for j0 in 0..y_shape[0]{
+        for j1 in 0..y_shape[1]{
+            let y_from_j = (j0*c+j1)*c;
+            let y_to_j = y_from_j+c;
+            top_u_slice_(u,&s[y_from_j..y_to_j],&mut y[y_from_j..y_to_j])
+        }
+    }
+
+}
+/**shape of s is [height, width, channels], shape of u is [height, width, channels, channels],
+ shape of y is [height, width, channels]. u is C-contiguous.
+ Element s[y,x,k,j]==0 means neuron k (row) can inhibit neuron j (column) within the minicolumn at position [y,x]. */
+pub fn top_u_conv_(y_shape:&[usize;3], u:&[f32], s:&[f32], y:&mut [u8]){
+    let m = y_shape.product();
+    let c = channels(y_shape).clone();
+    assert_eq!(y.len(),m);
+    assert_eq!(s.len(),m);
+    assert_eq!(u.len(),m*c);
+    for j0 in 0..y_shape[0]{
+        for j1 in 0..y_shape[1]{
+            let y_from_j = (j0*c+j1)*c;
+            let y_to_j = y_from_j+c;
+            let u_from_j = y_from_j*c;
+            let u_to_j = u_from_j+c*c;
+            top_u_slice_(&u[u_from_j..u_to_j],&s[y_from_j..y_to_j],&mut y[y_from_j..y_to_j])
+        }
+    }
+
+}
 
 /**u is row-major. Element u[k,j]==0 means neuron k (row) can inhibit neuron j (column). */
 pub fn top_u_slice(u:&[f32], s:&[f32]) ->Vec<bool>{
@@ -70,6 +155,45 @@ pub fn top_u(u:impl Fn(usize,usize)->f32,s:&[f32])->Vec<bool>{
 }
 
 
+
+/**shape of s is [height, width, channels], shape of u is [channels, channels],
+ shape of y is [height, width, channels].
+u is row-major. Element u[k,j]==0 means neuron k (row) can inhibit neuron j (column). */
+pub fn multiplicative_top_u_repeated_conv_(y_shape:&[usize;3], u:&[f32], s:&[f32],y:&mut [u8]){
+    let m = y_shape.product();
+    let c = channels(y_shape).clone();
+    assert_eq!(y.len(),m);
+    assert_eq!(s.len(),m);
+    assert_eq!(u.len(),c*c);
+    for j0 in 0..y_shape[0]{
+        for j1 in 0..y_shape[1]{
+            let y_from_j = (j0*c+j1)*c;
+            let y_to_j = y_from_j+c;
+            multiplicative_top_u_slice_(u,&s[y_from_j..y_to_j],&mut y[y_from_j..y_to_j])
+        }
+    }
+}
+
+/**shape of s is [height, width, channels], shape of u is [height, width, channels, channels],
+ shape of y is [height, width, channels].
+ u is C-contiguous.
+ Element s[y,x,k,j]==0 means neuron k (row) can inhibit neuron j (column) within the minicolumn at position [y,x]. */
+pub fn multiplicative_top_u_conv_(y_shape:&[usize;3], u:&[f32], s:&[f32],y:&mut [u8]){
+    let m = y_shape.product();
+    let c = channels(y_shape).clone();
+    assert_eq!(y.len(),m);
+    assert_eq!(s.len(),m);
+    assert_eq!(u.len(),m*c);
+    for j0 in 0..y_shape[0]{
+        for j1 in 0..y_shape[1]{
+            let y_from_j = (j0*c+j1)*c;
+            let y_to_j = y_from_j+c;
+            let u_from_j = y_from_j*c;
+            let u_to_j = u_from_j+c*c;
+            multiplicative_top_u_slice_(&u[u_from_j..u_to_j],&s[y_from_j..y_to_j],&mut y[y_from_j..y_to_j])
+        }
+    }
+}
 
 /**u is row-major. Element u[k,j]==0 means neuron k (row) can inhibit neuron j (column). */
 pub fn multiplicative_top_u_slice(u:&[f32], s:&[f32]) ->Vec<bool>{
@@ -116,13 +240,13 @@ mod tests {
         for _ in 0..10{
             let s = Vec::<f32>::rand(l);
             let u = Vec::<f32>::rand(l*l);
-            let y = top_u_slice_real(&u,&s);
+            let y = top_u_slice(&u,&s);
             assert!(y.contains(&true));
             for (j, ye) in y.iter().cloned().enumerate(){
                 if !ye{
                     let mut shunned = false;
                     for k in 0..l{
-                        if s[k] - s[j] > 1. - u[k*l+j]{
+                        if s[k] - s[j] < u[k*l+j]{
                             shunned = true;
                             break;
                         }
@@ -141,7 +265,7 @@ mod tests {
         for _ in 0..10{
             let s = Vec::<f32>::rand(l);
             let u = Vec::<bool>::rand(l*l);
-            let y = top_u_slice_bool(&u,&s);
+            let y = top_v_slice(&u,&s);
             assert!(y.contains(&true));
             for (j, ye) in y.iter().cloned().enumerate(){
                 if !ye{

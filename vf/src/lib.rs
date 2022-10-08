@@ -2,6 +2,11 @@
 #![feature(maybe_uninit_array_assume_init)]
 #![feature(maybe_uninit_uninit_array)]
 #![feature(step_trait)]
+#![feature(iter_collect_into)]
+#![feature(portable_simd)]
+#![feature(slice_flatten)]
+#![feature(const_ptr_read)]
+#![feature(const_refs_to_cell)]
 
 extern crate core;
 
@@ -19,22 +24,36 @@ pub mod dynamic_layout;
 pub mod dot_slice;
 mod vector_field_vec;
 pub mod shaped_tensor_mad;
-pub mod shape_arr;
+mod shape_arr;
 pub mod dot_mad_arr;
 pub mod dot_sparse_arr;
 pub mod shape;
 pub mod layout;
-pub mod blas;
 pub mod soft_wta;
 pub mod init_rand;
 pub mod conv_shape;
-pub mod xyzw;
-pub mod arr_concat;
+mod xyzw;
+mod arr_concat;
 pub mod vec_range;
-pub mod norm;
+mod norm;
 pub mod from_usize;
-pub mod tup_arr;
+mod tup_arr;
+pub mod mat_slice;
+pub mod mat_arr;
+pub mod algebraic_inductive_inference;
+pub mod bezier;
+mod lin_trans;
+pub mod collision;
+pub mod lin_alg;
+pub mod blas_safe;
+pub mod mesh_primitives;
 
+pub use arr_concat::*;
+pub use shape_arr::*;
+pub use tup_arr::*;
+pub use norm::*;
+pub use xyzw::*;
+pub use lin_trans::*;
 pub use vector_field::*;
 pub use vector_field_arr::*;
 pub use vector_field_vec::*;

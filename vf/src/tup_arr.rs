@@ -1,3 +1,7 @@
+pub fn slice_as_arr<X,const L:usize>(a:&[X])->&[X;L]{
+    assert_eq!(a.len(),L);
+    unsafe{&*(a.as_ptr() as *const [X; L])}
+}
 pub fn arr1<X>(a:(X))->[X;1]{
     let (a) = a;
     [a]

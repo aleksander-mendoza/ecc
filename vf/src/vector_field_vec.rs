@@ -44,3 +44,4 @@ impl<T: Copy> VectorFieldRngOwned<T> for Vec<T> where Standard: Distribution<T> 
         self
     }
 }
+

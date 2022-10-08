@@ -4,16 +4,15 @@ import torchvision
 import matplotlib.pyplot as plt
 import numpy as np
 
-MNIST = torchvision.datasets.MNIST('../data/', train=False, download=True)
+MNIST = torchvision.datasets.MNIST('../../data/', train=False, download=True)
 MNIST = MNIST.data.numpy()
 PATCH_SIZE = np.array([5, 5])
-w, h = 5, 4
+w, h = 8, 8
 y_len = w*h
 W = np.float32(np.random.rand(PATCH_SIZE.prod(), y_len))
 W = W / W.sum(0)
-U = np.float32(np.random.rand(y_len, y_len))
+V = np.ones((y_len, y_len), dtype=bool)
 W_epsilon = 0.0001
-U_epsilon = 0.001
 threshold = 0.1
 
 
@@ -30,21 +29,14 @@ def rand_patch():
 
 
 def run(x, learn):
-    global W, U
+    global W
     s = x @ W
     y = (s > threshold).view(np.ubyte) * 2
-    ecc_py.soft_wta_u_(U, s, y)
+    ecc_py.soft_wta_v_(V, s, y)
     y = y.view(bool)
     if learn:
         W[np.ix_(x, y)] += W_epsilon
         W = W / W.sum(0)
-        sk = np.tile(s[y], (y_len,1)).T
-        sk_minus_sj = sk - s
-        mask = sk_minus_sj > 0
-        U[y] *= 1 - mask * U_epsilon
-        U[y] += mask * abs(sk_minus_sj*U_epsilon)
-        if sum(s) > 0:
-            print(sum(y))
     return y
 
 

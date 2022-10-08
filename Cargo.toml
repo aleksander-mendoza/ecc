@@ -2,5 +2,6 @@
 
 members = [
     "vf",
-    "ecc_py"
+    "ecc_py",
+    "main"
 ]

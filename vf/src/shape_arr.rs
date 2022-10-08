@@ -1,3 +1,4 @@
+
 pub fn shape1<T, const DIM0: usize>(_mat: &[T; DIM0]) -> [usize; 1] {
     [DIM0]
 }

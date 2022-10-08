@@ -1,16 +1,13 @@
 [package]
-name = "vf"
+name = "ecc"
 version = "0.1.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-rand = "0.8.4"
-num-traits = "*"
-itertools = "0.10.3"
-lapack = "*"
-blas = "*"
-num-complex = "*"
-flo_curves = "*"
-nalgebra = "*"
+gl = "*"
+thiserror = "*"
+glutin = "*"
+imagine = "0.0.5"
+vf = {path="../vf"}

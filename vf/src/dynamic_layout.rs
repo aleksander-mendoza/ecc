@@ -1,5 +1,5 @@
 use std::ops::Range;
-use crate::init::{empty, init_fold_rev, InitEmptyWithCapacity};
+use crate::init::{empty, InitEmptyWithCapacity};
 use crate::{VectorField, VectorFieldOne};
 use crate::layout::BorrowAsLayout;
 
