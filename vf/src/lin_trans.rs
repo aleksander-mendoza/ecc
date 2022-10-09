@@ -1,6 +1,6 @@
 use std::ops::{Add, AddAssign, MulAssign, Neg, Sub};
 use std::process::Output;
-use num_traits::Num;
+use num_traits::{Float, Num};
 use crate::mat_arr::{mat2_add_column, mat3_add_column, mat3x2_add_row, mat4x3_add_row, mul_row_wise_};
 use crate::VectorFieldAddAssign;
 
@@ -57,6 +57,21 @@ pub fn rot_to_mat3d(xy_axes: [[f32; 3]; 2]) -> [[f32; 3]; 3] {
     [x_axis, y_axis, z_axis]
 }
 
+/**all angles are in radians*/
+pub fn perspective_proj<F: Float + Copy>(fov: F, aspect: F, near: F, far: F) -> [[F; 4]; 4] {
+    let two = F::one() + F::one();
+    let y_scale = F::one() / (fov / two).tan();
+    let x_scale = y_scale / aspect;
+    let nearmfar = near - far;
+    let z = F::zero();
+    [
+        [x_scale, z, z, z],
+        [z, y_scale, z, z],
+        [z, z, (far + near) / nearmfar, -F::one()],
+        [z, z, two * far * near / nearmfar, z]
+    ]
+}
+
 pub trait AffineTransformation<S, const DIM: usize>: Clone {
     fn compose_(&mut self, other: &Self) -> &mut Self;
     fn compose(&self, other: &Self) -> Self {
@@ -94,14 +109,14 @@ pub trait AffineTransformation<S, const DIM: usize>: Clone {
 #[derive(Clone, Debug)]
 pub struct AffTrans<S, const DIM: usize> where [(); { DIM - 1 }]: Sized {
     /**This holds both scaling and rotation information. Each vector's direction represents rotation axis,
-             and it's length represents scaling. The last axis must be perpendicular to all other, which means
-             that there are only DIM - 1 degrees of freedom. Therefore we do not store the last vector here.
-             It can be computer as needed. Once computed, we obtain an orthogonal axis.*/
+                             and it's length represents scaling. The last axis must be perpendicular to all other, which means
+                             that there are only DIM - 1 degrees of freedom. Therefore we do not store the last vector here.
+                             It can be computer as needed. Once computed, we obtain an orthogonal axis.*/
     axis: AlignmentAxis<S, DIM>,
     translation: Translation<S, DIM>,
 }
 
-impl<S: Copy+MulAssign+AddAssign, const DIM: usize> AffineTransformation<S, DIM> for AffTrans<S, DIM> where [(); { DIM - 1 }]: Sized {
+impl<S: Copy + MulAssign + AddAssign, const DIM: usize> AffineTransformation<S, DIM> for AffTrans<S, DIM> where [(); { DIM - 1 }]: Sized {
     fn compose_(&mut self, other: &Self) -> &mut Self {
         todo!()
     }
@@ -130,16 +145,22 @@ impl<S: Copy+MulAssign+AddAssign, const DIM: usize> AffineTransformation<S, DIM>
 }
 
 impl AffTrans<f32, 2> {
+    pub fn rot2(&self) -> [[f32; 2]; 2] {
+        rot_to_mat2d(self.axis[0])
+    }
     pub fn mat3(&self) -> [[f32; 3]; 3] {
-        let mut mat = rot_to_mat2d(self.axis[0]);
+        let mut mat = self.rot2();
         let mat = mat2_add_column(mat, self.translation);
         mat3x2_add_row(mat, [0., 0., 1.])
     }
 }
 
 impl AffTrans<f32, 3> {
+    pub fn rot3(&self) -> [[f32; 3]; 3] {
+        rot_to_mat3d(self.axis)
+    }
     pub fn mat4(&self) -> [[f32; 4]; 4] {
-        let mut mat = rot_to_mat3d(self.axis);
+        let mut mat = self.rot3();
         let mat = mat3_add_column(mat, self.translation);
         mat4x3_add_row(mat, [0., 0., 0., 1.])
     }

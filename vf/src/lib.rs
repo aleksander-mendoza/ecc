@@ -47,7 +47,13 @@ pub mod collision;
 pub mod lin_alg;
 pub mod blas_safe;
 pub mod mesh_primitives;
+pub mod piecewise_linear;
+mod mat_tri;
 
+pub use statrs::*;
+pub use levenshtein::*;
+pub use mat_tri::*;
+pub use levenshtein::*;
 pub use arr_concat::*;
 pub use shape_arr::*;
 pub use tup_arr::*;

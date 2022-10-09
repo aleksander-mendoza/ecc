@@ -1,7 +1,7 @@
 use crate::*;
 use std::ops::{Add, Sub, Div, Mul, Rem, Index, IndexMut, Neg, AddAssign, SubAssign, DivAssign, MulAssign, RemAssign};
 use std::mem::MaybeUninit;
-use num_traits::{Zero, One, Num, AsPrimitive, NumAssign};
+use num_traits::{Zero, One, Num, AsPrimitive, NumAssign, MulAdd};
 use rand::Rng;
 use rand::distributions::{Standard, Distribution};
 use crate::init::{empty, empty_uninit};
@@ -70,6 +70,13 @@ impl<T, const DIM: usize> VectorField<T> for [T; DIM] {
         zip_arr(self,other,f)
     }
 
+    fn zip3(&self, other: &Self, other2: &Self, mut f: impl FnMut(&T, &T, &T) -> T) -> Self::O {
+        zip3_arr(self,other,other2,f)
+    }
+    fn zip3_(&mut self, other: &Self, other2: &Self, mut f: impl FnMut(&mut T, &T, &T)) -> &mut Self{
+        self.iter_mut().zip(other.iter()).zip(other2.iter()).for_each(|((a, b),c)| f(a, b, c));
+        self
+    }
     fn fold_map<D>(&self, mut zero: D, mut f: impl FnMut(D, &T) -> (D, T)) -> (D, Self::O) {
         let mut arr: [MaybeUninit<T>; DIM] = MaybeUninit::uninit_array();
         for i in 0..DIM {
@@ -100,9 +107,15 @@ impl<T: Copy, const DIM: usize> VectorFieldOwned<T> for [T; DIM] {
         self.iter_mut().zip(other.iter().cloned()).for_each(|(a, b)| *a = f(*a, b));
         self
     }
+    fn _zip3(mut self, other: &Self,other2: &Self, mut f: impl FnMut(T, T, T) -> T) -> Self {
+        self.iter_mut().zip(other.iter()).zip(other2.iter()).for_each(|((a,b), c)| *a = f(*a, *b, *c));
+        self
+    }
 }
 
 impl<T: Copy + Add<Output=T>, const DIM: usize> VectorFieldAdd<T> for [T; DIM] {}
+
+impl <T: MulAdd<Output=T> + Mul<Output=T> + Add<Output=T> + Copy, const DIM: usize> VectorFieldMulAdd<T> for [T;DIM]{}
 
 impl<T: Copy + Add<Output=T> + Zero, const DIM: usize> VectorFieldZero<T> for [T; DIM] {}
 

@@ -1,6 +1,6 @@
 use std::ops::{Add, Sub, Div, Mul, Rem, Index, IndexMut, Neg, AddAssign, SubAssign, DivAssign, MulAssign, RemAssign};
 use std::mem::MaybeUninit;
-use num_traits::{Zero, One, Num, AsPrimitive, NumAssign};
+use num_traits::{Zero, One, Num, AsPrimitive, NumAssign, MulAdd};
 use rand::Rng;
 use rand::distributions::{Standard, Distribution};
 use crate::*;
@@ -69,6 +69,14 @@ impl<T> VectorField<T> for [T] {
         self.iter().zip(other.iter()).map(|(a, b)| f(a, b)).collect()
     }
 
+    #[inline]
+    fn zip3(&self, other: &Self, other2: &Self, mut f: impl FnMut(&T, &T, &T) -> T) -> Self::O {
+        self.iter().zip(other.iter()).zip(other2.iter()).map(|((a, b),c)| f(a, b, c)).collect()
+    }
+    fn zip3_(&mut self, other: &Self, other2: &Self, mut f: impl FnMut(&mut T, &T, &T)) -> &mut Self{
+        self.iter_mut().zip(other.iter()).zip(other2.iter()).for_each(|((a, b), c)| f(a, b, c));
+        self
+    }
     fn fold_map<D>(&self, mut zero: D, mut f: impl FnMut(D, &T) -> (D, T)) -> (D, Self::O) {
         let mut arr = Vec::with_capacity(self.len());
         for i in self {
@@ -93,6 +101,8 @@ impl<T> VectorField<T> for [T] {
 }
 
 impl<T: Copy + Add<Output=T>> VectorFieldAdd<T> for [T] {}
+
+impl <T: MulAdd<Output=T> + Mul<Output=T> + Add<Output=T> + Copy> VectorFieldMulAdd<T> for [T]{}
 
 impl<T: Copy + Add<Output=T> + Zero> VectorFieldZero<T> for [T] {}
 

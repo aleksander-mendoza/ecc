@@ -2,7 +2,7 @@ use std::fmt::{Debug, Formatter};
 
 use std::ops::{Add, Sub, Div, Mul, Rem, Index, IndexMut, Neg, AddAssign, SubAssign, DivAssign, MulAssign, RemAssign};
 use std::mem::MaybeUninit;
-use num_traits::{Zero, One, Num, AsPrimitive, NumAssign};
+use num_traits::{Zero, One, Num, AsPrimitive, NumAssign, MulAdd, MulAddAssign};
 use rand::Rng;
 use rand::distributions::{Standard, Distribution};
 use crate::init::{InitFilled, InitWith};
@@ -46,6 +46,8 @@ pub trait VectorField<Scalar> {
     type O;
     fn map(&self, f: impl FnMut(&Scalar) -> Scalar) -> Self::O;
     fn zip(&self, other: &Self, f: impl FnMut(&Scalar, &Scalar) -> Scalar) -> Self::O;
+    fn zip3(&self, other: &Self, other2: &Self, f: impl FnMut(&Scalar, &Scalar, &Scalar) -> Scalar) -> Self::O;
+    fn zip3_(&mut self, other: &Self, other2: &Self, f: impl FnMut(&mut Scalar, &Scalar, &Scalar)) -> &mut Self;
     fn fold_map<T>(&self, zero: T, f: impl FnMut(T, &Scalar) -> (T, Scalar)) -> (T, Self::O);
     fn rfold_map<T>(&self, zero: T, f: impl FnMut(T, &Scalar) -> (T, Scalar)) -> (T, Self::O);
 }
@@ -53,6 +55,7 @@ pub trait VectorField<Scalar> {
 pub trait VectorFieldOwned<Scalar: Copy>: Sized {
     fn _map(self, f: impl FnMut(Scalar) -> Scalar) -> Self;
     fn _zip(self, other: &Self, f: impl FnMut(Scalar, Scalar) -> Scalar) -> Self;
+    fn _zip3(self, other: &Self,other2: &Self, f: impl FnMut(Scalar, Scalar, Scalar) -> Scalar) -> Self;
 }
 
 pub trait VectorFieldFull<Scalar: Copy>: InitFilled<Scalar>+Sized {
@@ -80,6 +83,25 @@ pub trait VectorFieldAdd<Scalar: Add<Output=Scalar> + Copy>: VectorField<Scalar>
     }
 }
 
+pub trait VectorFieldMulAdd<Scalar: MulAdd<Output=Scalar> + Mul<Output=Scalar> + Add<Output=Scalar> + Copy>: VectorField<Scalar> {
+    /**`self*self_scalar + rhs*rhs_scalar`*/
+    fn linear_comb(&self, self_scalar:Scalar, rhs: &Self, rhs_scalar:Scalar) -> Self::O {
+        self.zip(rhs, |&a, &b| a.mul_add(self_scalar,rhs_scalar*b))
+    }
+    /**`self*self_scalar + rhs`*/
+    fn mul_scalar_add(&self, self_scalar:Scalar, rhs: &Self) -> Self::O {
+        self.zip(rhs, |&a, &b| a.mul_add(self_scalar,b))
+    }
+    /**`(self + rhs)*scalar`*/
+    fn add_mul_scalar(&self, rhs: &Self, scalar:Scalar) -> Self::O {
+        self.zip(rhs, |&a, &b| (a+b)*scalar)
+    }
+    /**`self*middle + rhs` where * is element-wise multiplication*/
+    fn mul_add(&self, middle: &Self, rhs: &Self) -> Self::O {
+        self.zip3(middle,rhs,|&a,&b,&c| a.mul_add(b,c))
+    }
+}
+
 pub trait VectorFieldAddOwned<Scalar: Add<Output=Scalar> + Copy>: VectorFieldOwned<Scalar> {
     fn _add(self, rhs: &Self) -> Self {
         self._zip(rhs, |a, b| a + b)
@@ -95,6 +117,25 @@ pub trait VectorFieldAddAssign<Scalar: AddAssign + Copy>: VectorField<Scalar> {
     }
     fn add_scalar_(&mut self, rhs: Scalar) -> &mut Self {
         self.map_(|a| *a += rhs)
+    }
+}
+
+pub trait VectorFieldMulAddAssign<Scalar: MulAddAssign + Mul<Output=Scalar> + Add<Output=Scalar> + Copy>: VectorField<Scalar> {
+    /**`self*self_scalar + rhs*rhs_scalar`*/
+    fn linear_comb_(&mut self, self_scalar:Scalar, rhs: &Self, rhs_scalar:Scalar) -> &mut Self {
+        self.zip_(rhs, |a, &b| a.mul_add_assign(self_scalar,rhs_scalar*b))
+    }
+    /**`self*self_scalar + rhs`*/
+    fn mul_scalar_add_(&mut self, self_scalar:Scalar, rhs: &Self) -> &mut Self {
+        self.zip_(rhs, |a, &b| a.mul_add_assign(self_scalar,b))
+    }
+    /**`(self + rhs)*scalar`*/
+    fn add_mul_scalar_(&mut self, rhs: &Self, scalar:Scalar) -> &mut Self {
+        self.zip_(rhs, |a, &b| *a=(*a + b)*scalar)
+    }
+    /**`self*middle + rhs` where * is element-wise multiplication*/
+    fn mul_add_(&mut self, middle: &Self, rhs: &Self) -> &mut Self {
+        self.zip3_(middle,rhs,|a,&b,&c| a.mul_add_assign(b,c))
     }
 }
 

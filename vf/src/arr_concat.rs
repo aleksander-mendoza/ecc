@@ -56,10 +56,24 @@ pub fn zip_arr<T,D,E, const DIM: usize>(arr1:&[T; DIM],arr2:&[D; DIM], mut f: im
     }
     unsafe{MaybeUninit::array_assume_init(arr)}
 }
+pub fn zip3_arr<T,D,E,F, const DIM: usize>(arr1:&[T; DIM],arr2:&[D; DIM],arr3:&[E; DIM], mut f: impl FnMut(&T, &D, &E) -> F) -> [F;DIM] {
+    let mut arr: [MaybeUninit<F>; DIM] = MaybeUninit::uninit_array();
+    for i in 0..DIM {
+        arr[i].write(f(&arr1[i], &arr2[i], &arr3[i]));
+    }
+    unsafe{MaybeUninit::array_assume_init(arr)}
+}
 pub fn _zip_arr<T,D,E, const DIM: usize>(arr1:[T; DIM],arr2:[D; DIM], mut f: impl FnMut(T, D) -> E) -> [E;DIM] {
     let mut arr: [MaybeUninit<E>; DIM] = MaybeUninit::uninit_array();
     for ((l,r),o) in arr1.into_iter().zip(arr2.into_iter()).zip(arr.iter_mut()) {
         o.write(f(l,r));
+    }
+    unsafe{MaybeUninit::array_assume_init(arr)}
+}
+pub fn _zip3_arr<T,D,E,F, const DIM: usize>(arr1:[T; DIM],arr2:[D; DIM],arr3:[E; DIM], mut f: impl FnMut(T, D, E) -> F) -> [F;DIM] {
+    let mut arr: [MaybeUninit<F>; DIM] = MaybeUninit::uninit_array();
+    for (((l,m),r),o) in arr1.into_iter().zip(arr2.into_iter()).zip(arr3.into_iter()).zip(arr.iter_mut()) {
+        o.write(f(l,m,r));
     }
     unsafe{MaybeUninit::array_assume_init(arr)}
 }

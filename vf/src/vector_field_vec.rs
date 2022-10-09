@@ -14,6 +14,11 @@ impl<T: Copy> VectorFieldOwned<T> for Vec<T> {
         self.iter_mut().zip(other.iter().cloned()).for_each(|(a, b)| *a = f(*a, b));
         self
     }
+
+    fn _zip3(mut self, other: &Self, other2: &Self, mut f: impl FnMut(T, T, T) -> T) -> Self {
+        self.iter_mut().zip(other.iter()).zip(other2.iter()).for_each(|((a, b), c)| *a = f(*a, *b, *c));
+        self
+    }
 }
 
 impl<T: Copy + Add<Output=T>> VectorFieldAddOwned<T> for Vec<T> {}
