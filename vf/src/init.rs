@@ -1,4 +1,6 @@
+use std::hash::Hasher;
 use std::mem::MaybeUninit;
+use crate::from_usize::FromUsize;
 
 pub trait UninitEmpty{
     unsafe fn empty_uninit()->Self;
@@ -94,12 +96,12 @@ impl <T:Clone> InitFilledCapacity<T> for Vec<T>{
         vec![f;capacity]
     }
 }
-impl <T:Clone,const DIM:usize> InitFold<T> for [T;DIM]{
+impl <T:Copy,const DIM:usize> InitFold<T> for [T;DIM]{
     fn init_fold(start: T, mut f: impl FnMut(T, usize) -> T) -> Self {
         init_fold(start,f)
     }
 }
-impl <T:Clone> InitFoldWithCapacity<T> for Vec<T>{
+impl <T:Copy> InitFoldWithCapacity<T> for Vec<T>{
     type C = usize;
     fn init_fold(capacity: usize, mut start: T, mut f: impl FnMut(T, usize) -> T) -> Self {
         let mut v = Vec::with_capacity(capacity);
@@ -110,12 +112,12 @@ impl <T:Clone> InitFoldWithCapacity<T> for Vec<T>{
         v
     }
 }
-impl <T:Clone,const DIM:usize> InitRFold<T> for [T;DIM]{
+impl <T:Copy,const DIM:usize> InitRFold<T> for [T;DIM]{
     fn init_rfold(mut end: T, mut f: impl FnMut(T, usize) -> T) -> Self {
         init_rfold(end, f)
     }
 }
-impl <T:Clone> InitRFoldWithCapacity<T> for Vec<T>{
+impl <T:Copy> InitRFoldWithCapacity<T> for Vec<T>{
     type C = usize;
     fn init_rfold(capacity: usize, mut end: T, mut f: impl FnMut(T, usize) -> T) -> Self {
         let mut v = unsafe{Vec::empty_uninit(capacity)};
@@ -132,7 +134,9 @@ pub unsafe fn empty_uninit<T, const DIM:usize>()->[T;DIM]{
 pub fn empty<T:Copy, const DIM:usize>()->[T;DIM]{
     unsafe{MaybeUninit::array_assume_init(MaybeUninit::uninit_array())}
 }
-pub fn init_fold<T:Clone, const DIM:usize>(start: T,mut  f: impl FnMut(T, usize) -> T)->[T;DIM]{
+pub fn init_fold<T:Copy, const DIM:usize>(start: T,mut  f: impl FnMut(T, usize) -> T)->[T;DIM]{
+    // Safety: f may panic and we will need to figure out how to drop only the initialized elements
+    // when unwinding. Because T is Copy, there can be do Drop so there is no problem
     let mut e:[MaybeUninit<T>;DIM] = MaybeUninit::uninit_array();
     e.iter_mut().enumerate().fold(start,|acc,(i,e)|{
         let a = f(acc,i);
@@ -141,7 +145,9 @@ pub fn init_fold<T:Clone, const DIM:usize>(start: T,mut  f: impl FnMut(T, usize)
     });
     unsafe{MaybeUninit::array_assume_init(e)}
 }
-pub fn init_rfold<T:Clone, const DIM:usize>(end: T,mut  f: impl FnMut(T, usize) -> T) ->[T;DIM]{
+pub fn init_rfold<T:Copy, const DIM:usize>(end: T,mut  f: impl FnMut(T, usize) -> T) ->[T;DIM]{
+    // Safety: f may panic and we will need to figure out how to drop only the initialized elements
+    // when unwinding. Because T is Copy, there can be do Drop so there is no problem
     let mut e:[MaybeUninit<T>;DIM] = MaybeUninit::uninit_array();
     e.iter_mut().enumerate().rev().fold(end,|acc,(i,e)|{
         let a = f(acc,i);
@@ -191,4 +197,80 @@ pub const unsafe fn array_assume_init3<X,const N: usize,const M: usize,const L: 
     // FIXME: required to avoid `~const Destruct` bound
     std::mem::forget(array);
     ret
+}
+
+pub fn filled1<A:Copy, const W:usize>(mut f: impl FnMut(usize)->A)->[A;W] {
+    // Safety: f may panic and we will need to figure out how to drop only the initialized elements
+    // when unwinding. Because T is Copy, there can be do Drop so there is no problem
+    let mut e:[MaybeUninit<A>;W] = MaybeUninit::uninit_array();
+    e.iter_mut().enumerate().for_each(|(i,e)| {e.write(f(i));});
+    unsafe{MaybeUninit::array_assume_init(e)}
+}
+pub fn filled2<A:Copy, const W:usize, const H:usize>(mut f: impl FnMut([usize;2])->A)->[[A;W];H] {
+    filled1(|i|filled1(|j|f([i,j])))
+}
+
+pub fn filled3<A:Copy, const W:usize, const H:usize,const D:usize>(mut f: impl FnMut([usize;3])->A)->[[[A;W];H];D]{
+    filled2(|[i,j]|filled1(|k|f([i,j,k])))
+}
+
+
+pub fn arange1<A:Copy+FromUsize, const W:usize>()->[A;W] {
+    filled1(A::from_usize)
+}
+pub fn arange2_sum<A:Copy+FromUsize, const W:usize, const H:usize>()->[[A;W];H] {
+    filled2(|[i,j]|A::from_usize(i+j))
+}
+pub fn arange3_sum<A:Copy+FromUsize, const W:usize, const H:usize,const D:usize>()->[[[A;W];H];D]{
+    filled3(|[i,j,k]|A::from_usize(i+j+k))
+}
+
+
+pub fn arange2<A:Copy+FromUsize, const W:usize, const H:usize>()->[[A;W];H] {
+    filled2(|[i,j]|A::from_usize(i*W+j))
+}
+pub fn arange3<A:Copy+FromUsize, const W:usize, const H:usize,const D:usize>()->[[[A;W];H];D]{
+    filled3(|[i,j,k]|A::from_usize((i*H+j)*W+k))
+}
+pub fn zeroed_boxed_static_slice<T:Copy,const DIM:usize>()->Box<[T;DIM]>{
+    unsafe{Box::<[T;DIM]>::new_zeroed().assume_init()}
+}
+pub fn uninit_boxed_static_slice<T:Copy,const DIM:usize>()->Box<[T;DIM]>{
+    unsafe{Box::<[T;DIM]>::new_uninit().assume_init()}
+}
+pub fn zeroed_boxed_slice<T:Copy>(len:usize)->Box<[T]>{
+    unsafe{Box::<[T]>::new_zeroed_slice(len).assume_init()}
+}
+pub fn uninit_boxed_slice<T:Copy>(len:usize)->Box<[T]>{
+    unsafe{Box::<[T]>::new_uninit_slice(len).assume_init()}
+}
+#[cfg(test)]
+mod tests {
+    use crate::shape::Shape;
+    use super::*;
+
+    #[test]
+    fn test3() {
+        let mat = arange3::<usize,5,3,4>();
+        let mut idx = 0;
+        for i in 0..4{
+            for j in 0..3{
+                for k in 0..5{
+                    assert_eq!(idx, mat[i][j][k]);
+                    idx += 1;
+                }
+            }
+        }
+    }
+    #[test]
+    fn test2() {
+        let mat = arange2::<usize,7,4>();
+        let mut idx = 0;
+        for i in 0..4{
+            for j in 0..7{
+                assert_eq!(idx, mat[i][j]);
+                idx += 1;
+            }
+        }
+    }
 }

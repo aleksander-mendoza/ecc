@@ -84,7 +84,7 @@ impl<S:Copy, const DIM: usize> InitEmptyWithCapacity for Mat<S, DIM> {
     }
 }
 
-impl<S:Clone, const DIM: usize> InitFoldWithCapacity<S> for Mat<S, DIM> {
+impl<S:Copy, const DIM: usize> InitFoldWithCapacity<S> for Mat<S, DIM> {
     type C = [u32; DIM];
 
     fn init_fold(capacity: Self::C, start: S, f: impl FnMut(S, usize) -> S) -> Self {
@@ -92,7 +92,7 @@ impl<S:Clone, const DIM: usize> InitFoldWithCapacity<S> for Mat<S, DIM> {
     }
 }
 
-impl<S:Clone, const DIM: usize> InitRFoldWithCapacity<S> for Mat<S, DIM> {
+impl<S:Copy, const DIM: usize> InitRFoldWithCapacity<S> for Mat<S, DIM> {
     type C = [u32; DIM];
 
     fn init_rfold(capacity: Self::C, end: S, f: impl FnMut(S, usize) -> S) -> Self {
@@ -265,9 +265,9 @@ impl<'a, S: Copy + RemAssign, const DIM: usize> RemAssign<S> for Mat<S, DIM> {
     }
 }
 
-pub trait Dot{
+pub trait Dot<Rhs=Self>{
     type Output;
-    fn dot(self,other:Self)->Self::Output;
+    fn dot(self,other:Rhs)->Self::Output;
 }
 impl<S: blas_safe::Dot, const DIM: usize> Dot for &Mat<S, DIM> {
     type Output = S;

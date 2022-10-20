@@ -14,6 +14,21 @@ pub fn tri_len(side_length:usize)->usize{
     (side_length * (side_length-1)) / 2
 }
 /**
+Given number of non-zero elements in triangular matrix returns the side length.
+An example below has 10 non-zero elements and side length 5.
+https://en.wikipedia.org/wiki/Triangular_number#Triangular_roots_and_tests_for_triangular_numbers
+```
+0  a9  a8  a7  a6
+0   0  a5  a4  a3
+0   0   0  a2  a1
+0   0   0   0  a0
+0   0   0   0   0
+```
+ */
+pub fn tri_side_len(len:usize)->f32{
+    (8.*len as f32-1.).sqrt()/2.
+}
+/**
 Returns number of non-zero elements in triangular matrix including diagonal. An example below has side length 4
 and 10 non-zero elements.
 ```

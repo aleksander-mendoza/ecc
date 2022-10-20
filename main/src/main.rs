@@ -1,14 +1,19 @@
 use std::ffi::{CString, NulError};
 use std::ptr;
 use std::string::FromUtf8Error;
-use glutin::{Api, ContextBuilder, GlRequest};
-use glutin::event::{Event, WindowEvent};
+use std::time::Instant;
+use glutin::{Api, ContextBuilder, ContextCurrentState, ContextWrapper, GlRequest};
+use glutin::event::{ElementState, Event, KeyboardInput, VirtualKeyCode, WindowEvent};
 use glutin::event_loop::{ControlFlow, EventLoop};
-use glutin::window::WindowBuilder;
+use glutin::window::{CursorGrabMode, Window, WindowBuilder};
 use thiserror::Error;
 use gl::types::*;
+use glutin::dpi::{LogicalPosition, PhysicalPosition, PhysicalSize};
+use glutin::error::ExternalError;
+use vf::{DegreesRadians, VectorFieldMulAssign, ArrayCast};
+use vf::Dot;
 
-type Pos = [f32; 2];
+type Pos = [f32; 3];
 type Color = [f32; 3];
 
 #[repr(C, packed)]
@@ -16,9 +21,9 @@ struct Vertex(Pos, Color);
 
 #[rustfmt::skip]
 const VERTICES: [Vertex; 3] = [
-    Vertex([-0.5, -0.5], [1.0, 0.0, 0.0]),
-    Vertex([0.5, -0.5], [0.0, 1.0, 0.0]),
-    Vertex([0.0, 0.5], [0.0, 0.0, 1.0])
+    Vertex([-0.5, -0.5, 0.], [1.0, 0.0, 0.0]),
+    Vertex([0.5, -0.5, 0.], [0.0, 1.0, 0.0]),
+    Vertex([0.0, 0.5, 0.], [0.0, 0.0, 1.0])
 ];
 
 pub struct Buffer {
@@ -113,12 +118,14 @@ pub enum ShaderError {
 
 const VERTEX_SHADER: &str = "
 #version 330
-in vec2 position;
+in vec3 position;
 in vec3 color;
 out vec3 vertexColor;
 
+uniform mat4 transform;
+
 void main() {
-    gl_Position = vec4(position, 0.0, 1.0);
+    gl_Position = transform * vec4(position, 1.0);
     vertexColor = color;
 }
 ";
@@ -227,6 +234,10 @@ impl ShaderProgram {
         let attrib = CString::new(attrib)?;
         Ok(unsafe{gl::GetAttribLocation(self.id, attrib.as_ptr()) as GLuint})
     }
+    pub fn get_uniform_location(&self, attrib:&str) -> Result<GLuint, NulError> {
+        let attrib = CString::new(attrib)?;
+        Ok(unsafe{gl::GetUniformLocation(self.id, attrib.as_ptr()) as GLuint})
+    }
 }
 
 impl Drop for ShaderProgram {
@@ -254,8 +265,15 @@ macro_rules! set_attribute {
     }};
 }
 
-
-
+#[derive(Default)]
+struct PressedKeys{
+    left:bool,
+    right:bool,
+    up:bool,
+    down:bool,
+    forward:bool,
+    backward:bool,
+}
 fn main() {
     let event_loop = EventLoop::new();
     let window = WindowBuilder::new().with_title("Learn OpenGL with Rust");
@@ -282,25 +300,98 @@ fn main() {
     unsafe{set_attribute!(vertex_array, pos_attrib, Vertex::0)};
     let color_attrib = program.get_attrib_location("color").unwrap();
     unsafe{set_attribute!(vertex_array, color_attrib, Vertex::1)};
+    let mut win_size = gl_context.window().inner_size();
+    fn make_proj_mat(win_size:&PhysicalSize<u32>)->[[f32;4];4]{
+        vf::perspective_proj(90f32.rad(),win_size.width as f32/win_size.height as f32,0.1,10.)
+    }
+    let mut projection = make_proj_mat(&win_size);
+    let mut view:[[f32;4];4] = vf::id();
+    let mut model:[[f32;4];4] = vf::id();
+    let mut keys = PressedKeys::default();
+    vf::translate4d_(&mut view, &[0.,0.,-1.]);
+    let mut window_position = gl_context.window().inner_position().unwrap();
+
+    let mvp_loc = program.get_uniform_location("transform").unwrap() as i32;
+    let mut grabbed = false;
+    let mut i = 0;
+    fn center_curson<T:ContextCurrentState>(gl_context:&ContextWrapper<T,Window>,window_position:&PhysicalPosition<i32>, win_size:&PhysicalSize<u32>) {
+        gl_context.window().set_cursor_position(LogicalPosition::new(window_position.x as f32 + win_size.width as f32/2.,window_position.y as f32 + win_size.height as f32/2.)).unwrap()
+    }
+    let mut prev_frame_time = Instant::now();
+    let mut delta = 0f32;
     event_loop.run(move |event, _, control_flow| {
-        *control_flow = ControlFlow::Wait;
+        // *control_flow = ControlFlow::;
 
         match event {
             Event::LoopDestroyed => (),
             Event::WindowEvent { event, .. } => match event {
+                WindowEvent::KeyboardInput {  input:KeyboardInput{virtual_keycode:Some(vk),state,..},.. } =>{
+                    let s = state == ElementState::Pressed;
+                    match vk{
+                        VirtualKeyCode::Left | VirtualKeyCode::A => {keys.left = s},
+                        VirtualKeyCode::Right | VirtualKeyCode::D => {keys.right = s},
+                        VirtualKeyCode::W | VirtualKeyCode::Up => {keys.forward = s},
+                        VirtualKeyCode::S | VirtualKeyCode::Down => {keys.backward = s},
+                        VirtualKeyCode::LShift  => {keys.down = s},
+                        VirtualKeyCode::Space  => {keys.up = s},
+                        VirtualKeyCode::Escape => {
+                            if s {
+                                grabbed = !grabbed;
+                                gl_context.window().set_cursor_grab(if grabbed { CursorGrabMode::Confined } else { CursorGrabMode::None });
+                                // gl_context.window().set_cursor_visible(!grabbed);
+                                if grabbed{
+                                    center_curson(&gl_context,&window_position, &win_size);
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                },
+                WindowEvent::Moved(pos) => {
+                    window_position = pos;
+                },
+                WindowEvent::MouseInput {state, button,..} =>{
+                    let s = state == ElementState::Pressed;
+
+                },
+                WindowEvent::CursorMoved {position,..} => {
+                    println!("{},{}", position.x,position.y);
+                    if grabbed{
+                        center_curson(&gl_context,&window_position, &win_size);
+                    }
+
+                },
                 WindowEvent::CloseRequested => *control_flow = ControlFlow::Exit,
-                WindowEvent::Resized(physical_size) => gl_context.resize(physical_size),
+                WindowEvent::Resized(physical_size) => {
+                    gl_context.resize(physical_size);
+                    win_size = physical_size;
+                    projection = make_proj_mat(&win_size);
+                },
                 _ => (),
             },
-            Event::RedrawRequested(_) => {
+            Event::MainEventsCleared => {
+                let now = Instant::now();
+                delta = now.duration_since(prev_frame_time).as_millis() as f32 / 1000.;
+                prev_frame_time = now;
+
+                i+=1;
+                let speed = 8f32 * delta;
+                let translation_vector = [keys.left as i8-keys.right as i8,keys.down as i8 - keys.up as i8,keys.forward as i8-keys.backward as i8];
+                let mut translation_vector = translation_vector.as_scalar::<f32>();
+                translation_vector.mul_scalar_(speed);
+                vf::translate4d_(&mut view, &translation_vector);
+                println!("{:?}", &view);
+                let mvp = projection.dot(&view.dot(&model));
                 unsafe {
                     gl::ClearColor(0.3, 0.3, 0.3, 1.0);
                     gl::Clear(gl::COLOR_BUFFER_BIT);
                     program.apply();
+                    gl::UniformMatrix4fv(mvp_loc, 1, gl::TRUE, mvp.as_ptr() as *const f32);
                     vertex_array.bind();
                     gl::DrawArrays(gl::TRIANGLES, 0, 3);
                 }
                 gl_context.swap_buffers().unwrap();
+                std::thread::sleep()
             }
             _ => (),
         }

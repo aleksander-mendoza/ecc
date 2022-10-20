@@ -1,6 +1,6 @@
 use std::ops::{Add, Sub, Div, Mul, Rem, Index, IndexMut, Neg, AddAssign, SubAssign, DivAssign, MulAssign, RemAssign};
 use std::mem::MaybeUninit;
-use num_traits::{Zero, One, Num, AsPrimitive, NumAssign, MulAdd};
+use num_traits::{Zero, One, Num, AsPrimitive, NumAssign, MulAdd, MulAddAssign};
 use rand::Rng;
 use rand::distributions::{Standard, Distribution};
 use crate::*;
@@ -128,6 +128,8 @@ impl<T: Neg<Output=T> + Copy> VectorFieldNeg<T> for [T] {}
 
 
 impl<T: Copy + AddAssign> VectorFieldAddAssign<T> for [T] {}
+
+impl <T: MulAddAssign + MulAdd<Output=T> + Mul<Output=T> + Add<Output=T> + Copy>  VectorFieldMulAddAssign<T> for [T]{}
 
 impl<T: Copy + SubAssign> VectorFieldSubAssign<T> for [T] {}
 

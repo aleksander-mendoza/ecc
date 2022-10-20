@@ -107,3 +107,79 @@ pub fn y2<D>(xy: &[D; 2]) -> &D {
 pub fn xy2<D>(x: D, y: D) -> [D; 2] {
     [x, y]
 }
+
+
+pub fn xy4_<D>(xyzw: &mut [D; 4]) -> &mut [D; 2] {
+    let [ref mut xy @ .., _, _ ] = xyzw;
+    xy
+}
+
+pub fn yz4_<D>(xyzw: &mut [D; 4]) -> &mut [D; 2] {
+    let [_, ref mut yz @ .., _  ] = xyzw;
+    yz
+}
+
+pub fn zw4_<D>(xyzw: &mut [D; 4]) -> &mut [D; 2] {
+    let [_, _, ref mut zw @ ..  ] = xyzw;
+    zw
+}
+
+pub fn yzw4_<D>(xyzw: &mut [D; 4]) -> &mut [D; 3] {
+    let [_, ref mut yzw @ ..  ] = xyzw;
+    yzw
+}
+
+
+pub fn xyz4_<D>(xyzw: &mut [D; 4]) -> &mut [D; 3] {
+    let [ref mut xyz @ .., _  ] = xyzw;
+    xyz
+}
+
+
+pub fn x4_<D>(xyzw: &mut [D; 4]) -> &mut D {
+    &mut xyzw[0]
+}
+
+pub fn y4_<D>(xyzw: &mut [D; 4]) -> &mut D {
+    &mut xyzw[1]
+}
+
+pub fn z4_<D>(xyzw: &mut [D; 4]) -> &mut D {
+    &mut xyzw[2]
+}
+
+pub fn w4_<D>(xyzw: &mut [D; 4]) -> &mut D {
+    &mut xyzw[3]
+}
+
+
+pub fn xy3_<D>(xyz: &mut [D; 3]) -> &mut [D; 2] {
+    let [ref mut xy @ .., _ ] = xyz;
+    xy
+}
+
+pub fn yz3_<D>(xyz: &mut [D; 3]) -> &mut [D; 2] {
+    let [_, ref mut yz @ ..  ] = xyz;
+    yz
+}
+
+pub fn x3_<D>(xyz: &mut [D; 3]) -> &mut D {
+    &mut xyz[0]
+}
+
+pub fn y3_<D>(xyz: &mut [D; 3]) -> &mut D {
+    &mut xyz[1]
+}
+
+pub fn z3_<D>(xyz: &mut [D; 3]) -> &mut D {
+    &mut xyz[2]
+}
+
+pub fn x2_<D>(xy: &mut [D; 2]) -> &mut D {
+    &mut xy[0]
+}
+
+pub fn y2_<D>(xy: &mut [D; 2]) -> &mut D {
+    &mut xy[1]
+}
+

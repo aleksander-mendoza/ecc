@@ -1,7 +1,7 @@
 use crate::*;
 use std::ops::{Add, Sub, Div, Mul, Rem, Index, IndexMut, Neg, AddAssign, SubAssign, DivAssign, MulAssign, RemAssign};
 use std::mem::MaybeUninit;
-use num_traits::{Zero, One, Num, AsPrimitive, NumAssign, MulAdd};
+use num_traits::{Zero, One, Num, AsPrimitive, NumAssign, MulAdd, MulAddAssign};
 use rand::Rng;
 use rand::distributions::{Standard, Distribution};
 use crate::init::{empty, empty_uninit};
@@ -162,6 +162,8 @@ impl<T: Neg<Output=T> + Copy, const DIM: usize> VectorFieldNegOwned<T> for [T; D
 
 
 impl<T: Copy + AddAssign, const DIM: usize> VectorFieldAddAssign<T> for [T; DIM] {}
+
+impl <T: MulAddAssign + MulAdd<Output=T> + Mul<Output=T> + Add<Output=T> + Copy, const DIM: usize>  VectorFieldMulAddAssign<T> for [T;DIM]{}
 
 impl<T: Copy + SubAssign, const DIM: usize> VectorFieldSubAssign<T> for [T; DIM] {}
 

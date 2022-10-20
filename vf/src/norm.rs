@@ -1,9 +1,9 @@
 use std::iter::Sum;
-use std::ops::{Add, AddAssign, DivAssign, Mul};
+use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign};
 use std::process::Output;
-use num_traits::{AsPrimitive, FromPrimitive, Pow, Zero};
+use num_traits::{AsPrimitive, Float, FromPrimitive, One, Pow, Zero};
 use crate::from_usize::FromUsize;
-use crate::{VectorFieldDivAssign, VectorFieldZero};
+use crate::{VectorFieldDivAssign, VectorFieldMul, VectorFieldMulAssign, VectorFieldZero};
 use crate::levenshtein;
 
 pub trait Norm {
@@ -48,6 +48,13 @@ norm_abs!(i16);
 norm_abs!(i32);
 norm_abs!(i64);
 
+impl <T:Norm+Copy> Norm for &T {
+    type Output = T::Output;
+
+    fn norm(self) -> Self::Output {
+        self.norm()
+    }
+}
 impl Norm for (f32, f32) {
     type Output = f32;
 
@@ -112,6 +119,18 @@ pub fn l3<E: Add<Output=E> + Zero + Mul<Output=E> + Copy, D>(vec: &[D], stride: 
     vec.iter().step_by(stride).map(|f| f.norm()).fold(E::zero(), |a, b| a + b * b * b)
 }
 
+pub fn _normalise<D: Div<Output=D> + One+MulAssign +Add<Output=D> + Zero + Mul<Output=D>+ Copy, const DIM:usize>(mut q:[D;DIM])->[D;DIM]{
+    normalise_(&mut q);
+    q
+}
+
+pub fn normalise_<D:Div<Output=D> + One+MulAssign +Add<Output=D> + Zero + Mul<Output=D>+ Copy>(q:&mut [D])->&mut [D]{
+    q.mul_scalar_(D::one()/l2(q, 1))
+}
+
+pub fn normalise<D:Div<Output=D> +  One+MulAssign +Add<Output=D> + Zero + Mul<Output=D>+ Copy, const DIM:usize>(q:&[D;DIM])-> [D;DIM]{
+    q.mul_scalar(D::one()/l2(q, 1))
+}
 /**C-contiguous matrix of shape [height, width]. Stride is equal to width. This function normalizes all columns*/
 pub fn normalize_mat_columns<D: DivAssign + Copy>(width: usize, matrix: &mut [D], norm_with_stride: impl Fn(&[D], usize) -> D) {
     for j in 0..width {
@@ -132,7 +151,7 @@ pub fn normalize_mat_rows<D: DivAssign + Copy>(width: usize, matrix: &mut [D], n
     }
 }
 
-pub fn ln<D: Add<Output=D> + Zero + Mul<Output=D> + Copy + FromUsize>(n: usize) -> fn(&[D], usize) -> D where for<'a> &'a D: Norm<Output=D> {
+pub fn l<D: Add<Output=D> + Zero + Mul<Output=D> + Copy + FromUsize>(n: usize) -> fn(&[D], usize) -> D where for<'a> &'a D: Norm<Output=D> {
     match n {
         0 => l0,
         1 => l1,
@@ -182,31 +201,43 @@ dist_metric_induced_by_norm!(i16);
 dist_metric_induced_by_norm!(i32);
 dist_metric_induced_by_norm!(i64);
 
-impl<X: Zero + AddAssign, const DIM: usize> Dist for &[X; DIM] where for<'a> &'a X: Dist<Output=X> {
-    type Output = X;
+fn square<X: Copy+Mul<Output=X>>(x: X) -> X {
+    x * x
+}
+
+impl<const DIM: usize> Dist for &[f32; DIM] {
+    type Output = f32;
 
     fn dist(self, other: Self) -> Self::Output {
-        let mut sum = X::zero();
-        for i in 0..DIM {
-            sum += self[i].dist(&other[i])
-        }
-        sum
+        (0..DIM).map(|i| square(self[i] - other[i])).sum::<Self::Output>().sqrt()
     }
 }
 
-impl<X: Zero + AddAssign> Dist for &[X] where for<'a> &'a X: Dist<Output=X> {
-    type Output = X;
+impl<const DIM: usize> Dist for &[f64; DIM] {
+    type Output = f64;
+
+    fn dist(self, other: Self) -> Self::Output {
+        (0..DIM).map(|i| square(self[i] - other[i])).sum::<Self::Output>().sqrt()
+    }
+}
+
+impl Dist for &[f32] {
+    type Output = f32;
 
     fn dist(self, other: Self) -> Self::Output {
         assert_eq!(self.len(), other.len());
-        let mut sum = X::zero();
-        for i in 0..self.len() {
-            sum += self[i].dist(&other[i])
-        }
-        sum
+        self.iter().zip(other.iter()).map(|(&a, &b)| square(a - b)).sum::<Self::Output>().sqrt()
     }
 }
 
+impl Dist for &[f64] {
+    type Output = f64;
+
+    fn dist(self, other: Self) -> Self::Output {
+        assert_eq!(self.len(), other.len());
+        self.iter().zip(other.iter()).map(|(&a, &b)| square(a - b)).sum::<Self::Output>().sqrt()
+    }
+}
 
 impl Dist for &str {
     type Output = usize;

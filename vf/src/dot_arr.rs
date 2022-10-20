@@ -4,6 +4,7 @@ use crate::init::{array_assume_init2, array_assume_init3, empty, uninit_array2, 
 use num_traits::{MulAdd, Zero};
 
 
+
 pub fn dot3<T: Add<Output = T> + Zero , const X: usize, const Y: usize, const Z: usize, const W: usize>(lhs: &[[[T; Z]; Y]; W], rhs: &[[[T; X]; Z]; W]) -> [[[T; X]; Y]; W]  where for<'a> &'a T: Mul<Output = T>{
     let mut o: [[[MaybeUninit<T>; X]; Y]; W]= uninit_array3();
     for w in 0..W {

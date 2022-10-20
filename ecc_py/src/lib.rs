@@ -12,7 +12,7 @@ use pyo3::PyResult;
 use pyo3::types::PyList;
 use vf::soft_wta::*;
 use vf::{ArrayCast, conv, VecCast, VectorField, VectorFieldOne};
-use vf::tup_arr::{arr2, arr3, slice_as_arr, tup2, tup3, tup4, tup6};
+use vf::{arr2, arr3, slice_as_arr, tup2, tup3, tup4, tup6};
 use crate::util::{arrX, py_any_as_numpy};
 
 
@@ -353,14 +353,14 @@ impl ConvShape {
     pub fn normalize_kernel_columns(&self, conv_tensor: &PyArray6<f32>, norm: usize) {
         assert_eq!(conv_tensor.shape(),self.cs.w_shape().as_scalar::<usize>().as_slice(), "Convolutional tensor shape is wrong");
         let rhs = unsafe{conv_tensor.as_slice_mut()}.expect("Convolutional weights tensor is not continuous");
-        self.cs.normalize_kernel_columns(rhs, vf::norm::ln(norm));
+        self.cs.normalize_kernel_columns(rhs, vf::l(norm));
     }
     #[text_signature = "(conv_tensor)"]
     /// conv_tensor is of shape [kernel_height, kernel_width, in_channels, out_channels]
     pub fn normalize_minicolumn(&self, conv_tensor: &PyArray4<f32>, norm: usize) {
         assert_eq!(conv_tensor.shape(),self.cs.minicolumn_w_shape().as_scalar::<usize>().as_slice(), "Convolutional tensor shape is wrong");
         let rhs = unsafe{conv_tensor.as_slice_mut()}.expect("Convolutional weights tensor is not continuous");
-        self.cs.normalize_minicolumn(rhs, vf::norm::ln(norm));
+        self.cs.normalize_minicolumn(rhs, vf::l(norm));
     }
     #[text_signature = "(input_pos, output_pos)"]
     pub fn idx(&self, input_pos: (Idx,Idx,Idx), output_pos: (Idx,Idx,Idx)) -> Idx { self.cs.idx(&arr3(input_pos), &arr3(output_pos)) }
@@ -566,12 +566,63 @@ pub fn rand_set(py:Python, cardinality: usize, from_inclusive: usize, to_exclusi
     let mut v = vf::rand_set(cardinality,from_inclusive..to_exclusive);
     PyArray1::from_vec(py,v).to_object(py)
 }
+
+#[pyfunction]
+#[text_signature = "(source_image, reference_image)"]
+/// images are of shape `[height, width, channels]`
+pub fn match_histogram<'py>(source: &'py PyArray3<u8>, reference: &'py PyArray3<u8>) -> PyResult<&'py PyArray3<u8>>{
+    let src_shape = source.shape();
+    let ref_shape = reference.shape();
+    assert!(src_shape.len()<=3,"Shape should be [height,width,channels]");
+    assert!(2<=src_shape.len(), "Shape should be [height,width,channels]");
+    assert!(ref_shape.len()<=3,"Shape should be [height,width,channels]");
+    assert!(2<=ref_shape.len(), "Shape should be [height,width,channels]");
+    let channels = src_shape.get(2).cloned().unwrap_or(1);
+    assert_eq!(channels, ref_shape.get(2).cloned().unwrap_or(1), "Number of channels does not match");
+    let src_shape = [src_shape[0],src_shape[1],channels];
+    let ref_shape = [ref_shape[0],ref_shape[1],channels];
+    let src = unsafe{source.as_slice()?};
+    let rfc = unsafe{reference.as_slice()?};
+    let out = vf::histogram::match_images(src,&src_shape,rfc,&ref_shape);
+    let v = PyArray1::from_vec(source.py(),out.into_vec());
+    v.reshape(src_shape)
+}
+
+
+#[pyfunction]
+#[text_signature = "(source_image, reference_histograms)"]
+/// `source_image` shape `[height, width, channels]`, `reference_histograms` shape `[batch,channels,256]`, return `(matched_image,best_ref_idx,best_square_dist)`
+pub fn match_best_images<'py>(source: &'py PyArray3<u8>, references: &'py PyArray3<f32>) -> PyResult<(&'py PyArray3<u8>,usize,f32)> {
+    let src_shape = source.shape();
+    let ref_shape = references.shape();
+    assert_eq!(src_shape.len(),3,"Shape should be [height,width,channels]");
+    assert_eq!(ref_shape.len(),3,"Shape should be [batch,channels,256]");
+    assert_eq!(ref_shape[1],src_shape[2], "Number of channels does not match");
+    assert_eq!(ref_shape[2],256, "Number of pixel values must be 256");
+    let src_shape = [src_shape[0],src_shape[1],src_shape[2]];
+    let ref_shape = [ref_shape[0],ref_shape[1],ref_shape[2]];
+    let src = unsafe{source.as_slice()?};
+    let rfc = unsafe{references.as_slice()?};
+    let (out,best_ref_idx,square_dist) = vf::histogram::match_best_images(src,&src_shape,ref_shape[0],rfc);
+    let v = PyArray1::from_vec(source.py(),out.into_vec());
+    v.reshape(src_shape).map(|a|(a,best_ref_idx,square_dist))
+}
+
+
+#[pymodule]
+fn histogram(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
+    m.add_function(wrap_pyfunction!(match_histogram, m)?)?;
+    m.add_function(wrap_pyfunction!(match_best_images, m)?)?;
+    Ok(())
+}
+
 /// A Python module implemented in Rust. The name of this function must match
 /// the `lib.name` setting in the `Cargo.toml`, else Python will not be able to
 /// import the module.
 #[pymodule]
 fn ecc_py(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
     m.add_class::<ConvShape>()?;
+    m.add_wrapped(&wrap_pymodule!(histogram))?;
     m.add_function(wrap_pyfunction!(version, m)?)?;
     m.add_function(wrap_pyfunction!(conv_out_size, m)?)?;
     m.add_function(wrap_pyfunction!(conv_in_size, m)?)?;

@@ -120,7 +120,7 @@ pub trait VectorFieldAddAssign<Scalar: AddAssign + Copy>: VectorField<Scalar> {
     }
 }
 
-pub trait VectorFieldMulAddAssign<Scalar: MulAddAssign + Mul<Output=Scalar> + Add<Output=Scalar> + Copy>: VectorField<Scalar> {
+pub trait VectorFieldMulAddAssign<Scalar: MulAddAssign + MulAdd<Output=Scalar> + Mul<Output=Scalar> + Add<Output=Scalar> + Copy>: VectorField<Scalar> {
     /**`self*self_scalar + rhs*rhs_scalar`*/
     fn linear_comb_(&mut self, self_scalar:Scalar, rhs: &Self, rhs_scalar:Scalar) -> &mut Self {
         self.zip_(rhs, |a, &b| a.mul_add_assign(self_scalar,rhs_scalar*b))
@@ -129,13 +129,17 @@ pub trait VectorFieldMulAddAssign<Scalar: MulAddAssign + Mul<Output=Scalar> + Ad
     fn mul_scalar_add_(&mut self, self_scalar:Scalar, rhs: &Self) -> &mut Self {
         self.zip_(rhs, |a, &b| a.mul_add_assign(self_scalar,b))
     }
-    /**`(self + rhs)*scalar`*/
+    /**`self + rhs*scalar`*/
     fn add_mul_scalar_(&mut self, rhs: &Self, scalar:Scalar) -> &mut Self {
-        self.zip_(rhs, |a, &b| *a=(*a + b)*scalar)
+        self.zip_(rhs, |a, &b| *a=b.mul_add(scalar,*a))
     }
     /**`self*middle + rhs` where * is element-wise multiplication*/
     fn mul_add_(&mut self, middle: &Self, rhs: &Self) -> &mut Self {
         self.zip3_(middle,rhs,|a,&b,&c| a.mul_add_assign(b,c))
+    }
+    /**`self + middle*rhs` where * is element-wise multiplication*/
+    fn add_mul_(&mut self, middle: &Self, rhs: &Self) -> &mut Self {
+        self.zip3_(middle,rhs,|a,&b,&c| *a=b.mul_add(c,*a))
     }
 }
 
