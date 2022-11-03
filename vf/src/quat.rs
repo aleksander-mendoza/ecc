@@ -1,5 +1,5 @@
 use num_traits::Float;
-use crate::{l2, mat3_to_mat4, VectorFieldMul, VectorFieldNeg, xyz4_};
+use crate::*;
 
 /**Quaternion*/
 pub type Quat<F: Float> = [F; 4];

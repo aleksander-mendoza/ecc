@@ -3,24 +3,23 @@ use crate::*;
 use std::ops::{Range, Mul, Add, Sub, Div, Rem};
 use num_traits::{One, Zero};
 
-pub fn in_range_begin<T: Mul<Output=T> + Copy, const DIM: usize>(out_position: &[T; DIM], stride: &[T; DIM]) -> [T; DIM] {
-    out_position.mul(stride)
+pub fn in_range_begin<T: Copy+Mul<Output=T>, const DIM: usize>(out_position: &[T; DIM], stride: &[T; DIM]) -> [T; DIM] {
+    (c1(out_position)*c1(stride)).into_arr()
 }
 
 /**returns the range of inputs that connect to a specific output neuron*/
-pub fn in_range<T: Copy + Mul<Output=T> + Add<Output=T> + Zero, const DIM: usize>(out_position: &[T; DIM], stride: &[T; DIM], kernel_size: &[T; DIM]) -> Range<[T; DIM]> {
+pub fn in_range<T: Copy+ Zero+Mul<Output=T> + Add<Output=T>, const DIM: usize>(out_position: &[T; DIM], stride: &[T; DIM], kernel_size: &[T; DIM]) -> Range<[T; DIM]>  {
     let from = in_range_begin(out_position, stride);
-    let to = from.add(kernel_size);
+    let to = add1(c1(&from),c1(kernel_size)).into_arr();
     from..to
 }
 
 /**returns the range of inputs that connect to a specific patch of output neuron.
 That output patch starts this position specified by this vector*/
-pub fn in_range_with_custom_size<T: Copy + Mul<Output=T> + Add<Output=T> + Zero + One + Sub<Output=T> + PartialOrd, const DIM: usize>(out_position: &[T; DIM], output_patch_size: &[T; DIM], stride: &[T; DIM], kernel_size: &[T; DIM]) -> Range<[T; DIM]> {
-    if output_patch_size.all_gt_scalar(T::zero()) {
+pub fn in_range_with_custom_size<T: Copy + Zero +Mul<Output=T> + Add<Output=T> + Div<Output=T>+Sub<Output=T> + One + PartialOrd, const DIM: usize>(out_position: &[T; DIM], output_patch_size: &[T; DIM], stride: &[T; DIM], kernel_size: &[T; DIM]) -> Range<[T; DIM]>  {
+    if all1(gt1(c1(output_patch_size),zeroes1())){
         let from = in_range_begin(out_position, stride);
-        let to = in_range_begin(&out_position.add(output_patch_size)._sub_scalar(T::one()), stride);
-        let to = to._add(kernel_size);
+        let to = ((c1(out_position)+c1(output_patch_size)-ones1::<T,DIM>())*c1(stride)+c1(kernel_size)).into_arr();
         from..to
     } else {
         [T::zero(); DIM]..[T::zero(); DIM]
@@ -28,7 +27,7 @@ pub fn in_range_with_custom_size<T: Copy + Mul<Output=T> + Add<Output=T> + Zero 
 }
 
 /**returns the range of outputs that connect to a specific input neuron*/
-pub fn out_range<T: Copy + Div<Output=T> + Add<Output=T> + Sub<Output=T> + One, const DIM: usize>(in_position: &[T; DIM], stride: &[T; DIM], kernel_size: &[T; DIM]) -> Range<[T; DIM]> {
+pub fn out_range<T: Copy + Div<Output=T> +Add<Output=T>+Sub<Output=T>+One, const DIM: usize>(in_position: &[T; DIM], stride: &[T; DIM], kernel_size: &[T; DIM]) -> Range<[T; DIM]>  where for<'a> &'a T:Mul<Output=T> + Add<Output=T> + Div<Output=T> + Sub<Output=T>{
     //out_position * stride .. out_position * stride + kernel
     //out_position * stride ..= out_position * stride + kernel - 1
     //
@@ -44,8 +43,8 @@ pub fn out_range<T: Copy + Div<Output=T> + Add<Output=T> + Sub<Output=T> + One, 
     //
     //(in_position - kernel + stride)/stride ..= in_position / stride
     //(in_position - kernel + stride)/stride .. in_position / stride + 1
-    let to = in_position.div(stride)._add_scalar(T::one());
-    let from = in_position.add(stride)._sub(kernel_size)._div(stride);
+    let to = (c1(in_position)/c1(stride)+ones1()).into_arr();
+    let from = ((c1(in_position)+c1(stride)-c1(kernel_size))/c1(stride)).into_arr();
     from..to
 }
 
@@ -54,44 +53,44 @@ pub fn out_transpose_kernel<T: Copy + Div<Output=T> + Add<Output=T> + One + Sub<
     //  in_position / stride + 1 - (in_position - kernel + stride)/stride
     //  (in_position- (in_position - kernel + stride))/stride + 1
     //  (kernel - stride)/stride + 1
-    debug_assert!(kernel.all_ge(stride));
-    kernel.sub(stride)._div(stride)._add_scalar(T::one())
+    debug_assert!(all1(ge1(kernel,stride)));
+    ((c1(kernel)-c1(stride))/c1(stride)+ones1()).into_arr()
 }
 
 /**returns the range of outputs that connect to a specific input neuron.
 output range is clipped to 0, so that you don't get overflow on negative values when dealing with unsigned integers.*/
 pub fn out_range_clipped<T: Copy + Div<Output=T> + Add<Output=T> + Sub<Output=T> + One + Ord, const DIM: usize>(in_position: &[T; DIM], stride: &[T; DIM], kernel_size: &[T; DIM]) -> Range<[T; DIM]> {
-    let to = in_position.div(stride)._add_scalar(T::one());
-    let from = in_position.add(stride)._max(kernel_size)._sub(kernel_size)._div(stride);
+    let to = (c1(in_position)/c1(stride)+ones1()).into_arr();
+    let from = ((max1(c1(in_position)+c1(stride),c1(kernel_size))-c1(kernel_size))/c1(stride)).into_arr();
     from..to
 }
 
 pub fn out_range_clipped_both_sides<T: Copy + Div<Output=T> + Add<Output=T> + One + Sub<Output=T> + Ord, const DIM: usize>(in_position: &[T; DIM], stride: &[T; DIM], kernel_size: &[T; DIM], max_bounds: &[T; DIM]) -> Range<[T; DIM]> {
-    let mut r = out_range_clipped(in_position, stride, kernel_size);
-    r.end.min_(max_bounds);
-    r
+    let to = min1(c1(in_position)/c1(stride)+ones1(), c1(max_bounds)).into_arr();
+    let from = ((max1(c1(in_position)+c1(stride),c1(kernel_size))-c1(kernel_size))/c1(stride)).into_arr();
+    from..to
 }
 
 pub fn out_size<T: Debug + Rem<Output=T> + Copy + Div<Output=T> + Add<Output=T> + Sub<Output=T> + Ord + Zero + One, const DIM: usize>(input: &[T; DIM], stride: &[T; DIM], kernel_size: &[T; DIM]) -> [T; DIM] {
-    assert!(kernel_size.all_le(input), "Kernel size {:?} is larger than the input shape {:?} ", kernel_size, input);
-    let input_sub_kernel = input.sub(kernel_size);
-    assert!(input_sub_kernel.rem(stride).all_eq_scalar(T::zero()), "Convolution stride {:?} does not evenly divide the input shape {:?}-{:?}={:?} ", stride, input, kernel_size, input_sub_kernel);
-    input_sub_kernel._div(stride)._add_scalar(T::one())
+    assert!(all1(le1(kernel_size,input)), "Kernel size {:?} is larger than the input shape {:?} ", kernel_size, input);
+    let input_sub_kernel = c1(input)-c1(kernel_size);
+    assert!(all1(is_zero1( input_sub_kernel%c1(stride))), "Convolution stride {:?} does not evenly divide the input shape {:?}-{:?}={:?} ", stride, input, kernel_size, input_sub_kernel.into_arr());
+    (input_sub_kernel/c1(stride)+ones1()).into_arr()
     //(input-kernel)/stride+1 == output
 }
 
 pub fn in_size<T: Debug + Copy + Div<Output=T> + Add<Output=T> + Sub<Output=T> + Zero + Ord + One , const DIM: usize>(output: &[T; DIM], stride: &[T; DIM], kernel_size: &[T; DIM]) -> [T; DIM] {
-    assert!(output.all_gt_scalar(T::zero()), "Output size {:?} contains zero", output);
-    output.sub_scalar(T::one())._mul(stride)._add(kernel_size)
+    assert!(all1(gt1(c1(output),zeroes1())), "Output size {:?} contains zero", output);
+    ((c1(output)-ones1())*c1(stride)+c1(kernel_size)).into_arr()
     //input == stride*(output-1)+kernel
 }
 
 pub fn stride<T: Debug + Rem<Output=T>+ Copy + Div<Output=T> + Add<Output=T> + Sub<Output=T> + Ord + One + Zero, const DIM: usize>(input: &[T; DIM], out_size: &[T; DIM], kernel_size: &[T; DIM]) -> [T; DIM] {
-    assert!(kernel_size.all_le(input), "Kernel size {:?} is larger than the input shape {:?}", kernel_size, input);
-    let input_sub_kernel = input.sub(kernel_size);
-    let out_size_minus_1 = out_size.sub_scalar(T::one());
-    assert!(input_sub_kernel.rem_default_zero(&out_size_minus_1, T::zero()).all_eq_scalar(T::zero()), "Output shape {:?}-1 does not evenly divide the input shape {:?}", out_size, input);
-    input_sub_kernel._div_default_zero(&out_size_minus_1, T::one())
+    assert!(all1(le1(kernel_size,input)), "Kernel size {:?} is larger than the input shape {:?}", kernel_size, input);
+    let input_sub_kernel = c1(input)-c1(kernel_size);
+    let out_size_minus_1 = c1(out_size)-ones1();
+    assert!(all1(eq1(if1(is_zero1(out_size_minus_1),zeroes1(),input_sub_kernel%out_size_minus_1),zeroes1())), "Output shape {:?}-1 does not evenly divide the input shape {:?}", out_size, input);
+    if1(is_zero1(out_size_minus_1),ones1(),input_sub_kernel%out_size_minus_1).into_arr()
     //(input-kernel)/(output-1) == stride
 }
 
@@ -104,9 +103,9 @@ pub fn compose<T:Copy +  Div<Output=T> + Add<Output=T> + Sub<Output=T> + Ord + O
     //(A-(kernelA+(kernelB-1)*strideA))/(strideA*strideB)+1 == C
     //    ^^^^^^^^^^^^^^^^^^^^^^^^^^^                    composed kernel
     //                                   ^^^^^^^^^^^^^^^ composed stride
-    let composed_kernel = next_kernel.sub_scalar(T::one())._mul(self_stride)._add(self_kernel);
-    let composed_stride = self_stride.mul(next_stride);
-    (composed_stride, composed_kernel)
+    let composed_kernel = (c1(next_kernel)-ones1())*c1(self_stride)+c1(self_kernel);
+    let composed_stride = c1(self_stride)*c1(next_stride);
+    (composed_stride.into_arr(), composed_kernel.into_arr())
 }
 
 // pub fn conv(&[])

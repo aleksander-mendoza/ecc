@@ -1,5 +1,4 @@
 pub mod uv {
-    use crate::init::InitEmptyWithCapacity;
 
     /**number of rings is the longitude resolution (number of latitudal lines), number of sectors is the latitude resolution (number of longitudal lines)*/
     pub fn sphere(rings: usize, sectors: usize) -> Vec<[f32; 2]> {
@@ -16,7 +15,6 @@ pub mod uv {
 
 pub mod norm {
     use std::f32::consts::PI;
-    use crate::init::InitEmptyWithCapacity;
 
     /**number of rings is the longitude resolution (number of latitudal lines), number of sectors is the latitude resolution (number of longitudal lines)*/
     pub fn sphere(rings: usize, sectors: usize) -> Vec<[f32; 3]> {
@@ -41,8 +39,7 @@ pub mod norm {
  indices ()*/
 pub mod vert {
     use std::f32::consts::{FRAC_PI_2, PI};
-    use crate::init::InitEmptyWithCapacity;
-    use crate::VectorFieldMulAssign;
+    use crate::*;
 
     pub fn cube(size: [f32; 3]) -> [[f32; 3]; 8] {
         let [x, y, z] = size;
@@ -82,7 +79,6 @@ pub mod vert {
 pub mod ind {
     use std::iter::Step;
     use num_traits::{AsPrimitive, Num, PrimInt};
-    use crate::init::InitEmptyWithCapacity;
 
     pub const CUBE: [u32; 36] = [
         //Top

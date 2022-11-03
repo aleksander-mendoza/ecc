@@ -1,6 +1,6 @@
 use std::ops::Mul;
 use num_traits::{Float, MulAdd};
-use crate::{dot_mad_arr::dot0, VectorFieldMulAdd, VectorFieldSub};
+use crate::*;
 
 
 /**Pair [P, U] defines line gives by equation `P+s*U` where s is scalar and P,U are points*/
@@ -10,24 +10,24 @@ pub type Line<F, const DIM: usize> = [[F; DIM]; 2];
  * perpendicular to both of the lines a and b. Returns pair `[s,t]` such that `line::pos(a,s)` and `line::pos(b,t)` are the coordinates of the two
  closest points. If both lines are parallel, then the third perpendicular line is drawn at `t==0`*/
 pub fn closest_points<F: Float + MulAdd<Output=F>, const DIM: usize>(a: &Line<F, DIM>, b: &Line<F, DIM>) -> [F; 2] {
-    let qp = b[0].sub(&a[0]);
+    let qp = sub1(b[0],a[0]).into_arr();
     let u = &a[1];
     let v = &b[1];
     if u.eq(v) {
         // similar to https://math.stackexchange.com/questions/1347604/find-3d-distance-between-two-parallel-lines-in-simple-way
         // but we ue cos(theta) to compute s, while t=0 is assumed , thus is becomes just
         // https://en.wikipedia.org/wiki/Vector_projection#Scalar_projection_2
-        let s = dot0(u, &qp);
+        let s = dot1(u.c(), qp);
         let t = F::zero();
         [s, t]
     } else {
         // https://math.stackexchange.com/questions/1033419/line-perpendicular-to-two-other-lines-data-sufficiency
-        let uu = dot0(u,u);
-        let vv = dot0(v,v);
-        let uv = dot0(u, v);
+        let uu = dot1(u.c(),u.c());
+        let vv = dot1(v.c(),v.c());
+        let uv = dot1(u.c(), v.c());
 
-        let uqp = dot0(u, &qp);
-        let vqp = dot0(v, &qp);
+        let uqp = dot1(u.c(), qp);
+        let vqp = dot1(v.c(), qp);
         // s * uu - t * uv =  uqp
         // s * uv - t * vv =  vqp
         //
@@ -52,5 +52,5 @@ pub fn closest_points<F: Float + MulAdd<Output=F>, const DIM: usize>(a: &Line<F,
 }
 
 pub fn pos<F:Float+Copy+MulAdd<Output=F>,const DIM: usize>(a: &Line<F, DIM>, t:F) -> [F; DIM] {
-    a[1].mul_scalar_add(t,&a[0])
+    a[1].c().mul_scalar_add(t,a[0].c())
 }

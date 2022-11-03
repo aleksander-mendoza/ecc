@@ -3,10 +3,8 @@ use std::iter::Step;
 use std::ops::{Add, Mul};
 use itertools::Itertools;
 use num_traits::{AsPrimitive, One, Zero};
-use crate::conv_shape::{channels, height, width};
-use crate::shape::Shape;
-use crate::VectorFieldOne;
-use crate::xyzw::z3;
+use crate::conv_shape::*;
+use crate::*;
 
 pub const NULL:u8 = 2;
 
@@ -14,7 +12,7 @@ pub const NULL:u8 = 2;
  shape of y is [height, width, channels]. u is C-contiguous.
  Element s[k,j]==0 means neuron k (row) can inhibit neuron j (column).*/
 pub fn top_v_repeated_conv_(y_shape:&[usize;3], v:&[bool], s:&[f32], y:&mut [u8]){
-    let m = y_shape.product();
+    let m = prod(y_shape);
     let c = channels(y_shape).clone();
     assert_eq!(y.len(),m);
     assert_eq!(s.len(),m);
@@ -33,7 +31,7 @@ pub fn top_v_repeated_conv_(y_shape:&[usize;3], v:&[bool], s:&[f32], y:&mut [u8]
  shape of y is [height, width, channels]. u is C-contiguous.
  Element s[y,x,k,j]==1 means neuron k (row) can inhibit neuron j (column) within the minicolumn at position [y,x].*/
 pub fn top_v_conv_(y_shape:&[usize;3], v:&[bool], s:&[f32], y:&mut [u8]){
-    let m = y_shape.product();
+    let m = prod(y_shape);
     let c = channels(y_shape).clone();
     assert_eq!(y.len(),m);
     assert_eq!(s.len(),m);
@@ -86,7 +84,7 @@ pub fn top_v_(v:impl Fn(usize,usize)->bool,s:&[f32], y:&mut [u8]){
  shape of y is [height, width, channels]. u is C-contiguous.
  Element s[k,j]==0 means neuron k (row) can inhibit neuron j (column).*/
 pub fn top_u_repeated_conv_(y_shape:&[usize;3], u:&[f32], s:&[f32], y:&mut [u8]){
-    let m = y_shape.product();
+    let m = prod(y_shape);
     let c = channels(y_shape).clone();
     assert_eq!(y.len(),m);
     assert_eq!(s.len(),m);
@@ -104,7 +102,7 @@ pub fn top_u_repeated_conv_(y_shape:&[usize;3], u:&[f32], s:&[f32], y:&mut [u8])
  shape of y is [height, width, channels]. u is C-contiguous.
  Element s[y,x,k,j]==0 means neuron k (row) can inhibit neuron j (column) within the minicolumn at position [y,x]. */
 pub fn top_u_conv_(y_shape:&[usize;3], u:&[f32], s:&[f32], y:&mut [u8]){
-    let m = y_shape.product();
+    let m = prod(y_shape);
     let c = channels(y_shape).clone();
     assert_eq!(y.len(),m);
     assert_eq!(s.len(),m);
@@ -160,7 +158,7 @@ pub fn top_u(u:impl Fn(usize,usize)->f32,s:&[f32])->Vec<bool>{
  shape of y is [height, width, channels].
 u is row-major. Element u[k,j]==0 means neuron k (row) can inhibit neuron j (column). */
 pub fn multiplicative_top_u_repeated_conv_(y_shape:&[usize;3], u:&[f32], s:&[f32],y:&mut [u8]){
-    let m = y_shape.product();
+    let m = prod(y_shape);
     let c = channels(y_shape).clone();
     assert_eq!(y.len(),m);
     assert_eq!(s.len(),m);
@@ -179,7 +177,7 @@ pub fn multiplicative_top_u_repeated_conv_(y_shape:&[usize;3], u:&[f32], s:&[f32
  u is C-contiguous.
  Element s[y,x,k,j]==0 means neuron k (row) can inhibit neuron j (column) within the minicolumn at position [y,x]. */
 pub fn multiplicative_top_u_conv_(y_shape:&[usize;3], u:&[f32], s:&[f32],y:&mut [u8]){
-    let m = y_shape.product();
+    let m = prod(y_shape);
     let c = channels(y_shape).clone();
     assert_eq!(y.len(),m);
     assert_eq!(s.len(),m);
@@ -229,17 +227,18 @@ pub fn multiplicative_top_u(u:impl Fn(usize,usize)->f32,s:&[f32])->Vec<bool>{
 
 #[cfg(test)]
 mod tests {
-    use crate::init_rand::InitRandWithCapacity;
-    use crate::VectorFieldPartialOrd;
+    use rand::Rng;
+    use crate::*;
     use super::*;
 
 
     #[test]
     fn test_real(){
+
         let l = 20;
         for _ in 0..10{
-            let s = Vec::<f32>::rand(l);
-            let u = Vec::<f32>::rand(l*l);
+            let s:Vec<f32> = rnd_vec(l);
+            let u:Vec<f32> = rnd_vec(l*l);
             let y = top_u_slice(&u,&s);
             assert!(y.contains(&true));
             for (j, ye) in y.iter().cloned().enumerate(){
@@ -263,8 +262,8 @@ mod tests {
     fn test_bool(){
         let l = 20;
         for _ in 0..10{
-            let s = Vec::<f32>::rand(l);
-            let u = Vec::<bool>::rand(l*l);
+            let s:Vec<f32> = rnd_vec(l);
+            let u:Vec<bool> = rnd_vec(l*l);
             let y = top_v_slice(&u,&s);
             assert!(y.contains(&true));
             for (j, ye) in y.iter().cloned().enumerate(){

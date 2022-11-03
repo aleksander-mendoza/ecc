@@ -1,6 +1,6 @@
-use std::ops::{Add, Mul};
+use std::ops::{Add, DivAssign, Mul};
 use num_traits::Zero;
-use crate::VectorField;
+use crate::*;
 
 /**C-contiguous matrix of shape [height, width]. Stride is equal to width. This function folds all elements in a column*/
 pub fn fold_columns<A:Clone,D>(width:usize, matrix: &[D], init:&mut[A], fold:impl Fn(A,&D)->A){
@@ -65,5 +65,28 @@ pub fn product_mat_columns<A:Clone+Mul<Output=A>>(width:usize, matrix: &[A], pro
 /**C-contiguous matrix of shape [height, width]. Stride is equal to width. This function multiplies all elements in a row*/
 pub fn product_mat_rows<A:Clone+Mul<Output=A>>(width:usize, matrix: &[A], products:&mut[A]){
     fold_rows(width, matrix, products, |a, b|a*b.clone())
+}
+
+
+/**C-contiguous matrix of shape [height, width]. Stride is equal to width. This function normalizes all columns*/
+pub fn normalize_mat_columns<D: DivAssign + Copy>(width: usize, matrix: &mut [D], norm_with_stride: impl Fn(&[D], usize) -> D) {
+    for j in 0..width {
+        let modulo_equivalence_class = &mut matrix[j..];
+        let n = norm_with_stride(modulo_equivalence_class, width);
+        modulo_equivalence_class.iter_mut().step_by(width).for_each(|w| *w /= n);
+    }
+}
+
+/**C-contiguous matrix of shape [height, width]. Stride is equal to width. This function normalizes all rows*/
+pub fn normalize_mat_rows<D: DivAssign + Copy>(width: usize, matrix: &mut [D], norm_with_stride: impl Fn(&[D], usize) -> D) {
+    let mut from = 0;
+    while from < matrix.len() {
+        let to = from + width;
+        let row = &mut matrix[from..to];
+        let norm = norm_with_stride(row, 1);
+        div_(row, full(norm));
+        // row.div_scalar_(norm_with_stride(row, 1));
+        from = to;
+    }
 }
 

@@ -4,12 +4,12 @@ use std::simd;
 use std::simd::{f32x16, Simd, SimdElement};
 use itertools::Itertools;
 use num_traits::{AsPrimitive, Float, MulAdd, MulAddAssign, NumAssign, One, Zero};
-use crate::init::InitRFoldWithCapacity;
-use crate::{Dist, piecewise_linear, tri_len, VectorField, VectorFieldMulOwned, VectorFieldAdd, VectorFieldMulAssign, VectorFieldAddAssign, VectorFieldAddOwned, VectorFieldInitZero, VectorFieldMul, VectorFieldMulAdd, VectorFieldSub};
+use crate::*;
+use crate::rev_vec::{CollectRev, RevVec};
 
 pub type Bezier<F: Float, const DIM: usize> = [[F; DIM]];
 
-pub fn pos<F: NumAssign + Float + Copy + 'static, const DIM: usize>(bezier_curve: &Bezier<F, DIM>, t: F) -> [F; DIM] where usize: AsPrimitive<F> {
+pub fn pos<F: NumAssign +MulAdd<Output=F>+ Float + Copy + 'static, const DIM: usize>(bezier_curve: &Bezier<F, DIM>, t: F) -> [F; DIM] where usize: AsPrimitive<F> {
     pos_with(|i|bezier_curve[i],bezier_curve.len(),t)
 }
 /**Returns position of point that lies at distance t on the curve (where t is normalized to range between 0 and 1).
@@ -18,15 +18,16 @@ https://en.wikipedia.org/wiki/B%C3%A9zier_curve#General_definition and here
 https://en.wikipedia.org/wiki/De_Casteljau%27s_algorithm
 Returns $\sum_{i=0}^{n-1} \binom{n-1}{i} (1 - t)^{n-1-i} t^i P_i$ where P_i is the point at bezier_curve[i].
  If you can't see the LaTeX equation copy-paste it to https://latex.codecogs.com/eqneditor/editor.php*/
-pub fn pos_with<F: NumAssign + Float + Copy + 'static, const DIM: usize>(mut bezier_curve: impl FnMut(usize)->[F; DIM], bezier_curve_length:usize, t: F) -> [F; DIM] where usize: AsPrimitive<F> {
+pub fn pos_with<F: NumAssign +MulAdd<Output=F> + Float + Copy + 'static, const DIM: usize>(mut bezier_curve: impl FnMut(usize)->[F; DIM], bezier_curve_length:usize, t: F) -> [F; DIM] where usize: AsPrimitive<F> {
     let n = bezier_curve_length;
+    /**b_{n-1} = 1*/
+    let mut b_i = F::one();
     /**b_i = (1-t)^{n-1-i}*/
-    let b = Vec::init_rfold(
-        /*0 \le i < */n,
-        /*b_{n-1}=*/F::one(),
-        /** b_{i-1} = (1-t)^{n-1-i+1} = (1-t)^{n-1-i}(1-t) = b_i (1-t) */
-        |/*b_i=*/b, i| /*b_{i-1=}*/b * (F::one() - t),
-    );
+    let b = (0..n).map( |/*0 \le i < n*/ i|{
+        /* b_{i-1} = (1-t)^{n-1-i+1} = (1-t)^{n-1-i}(1-t) = b_i (1-t) */
+        b_i = b_i * (F::one() - t);
+        b_i
+    }).collect_rev();
     let mut v = [F::zero(); DIM];
     /**c_i = \frac{(n-1)!}{(n-1-i)!} */
     let mut c = 1; // c_0 = 1
@@ -43,7 +44,7 @@ pub fn pos_with<F: NumAssign + Float + Copy + 'static, const DIM: usize>(mut bez
         let n_minus_1_choose_i = c / i_factorial;
         /**\binom{n-1}{i} (1 - t)^{n-1-i} t^i */
         let coefficient = n_minus_1_choose_i.as_() * t_power_i * b;
-        v.add_(&p.mul_scalar(coefficient));
+        v.assign_(p.mul_scalar_add(coefficient,v));
         t_power_i *= t;
         i_factorial *= i;
         /*c_{i+1} = \frac{(n-1)!}{(n-1-i-1)!} = \frac{(n-1)!(n-1-i)}{(n-1-i-1)!(n-1-i)} = \frac{(n-1)!(n-1-i)}{(n-1-i)!} = c_i (n-1-i)*/
@@ -56,16 +57,16 @@ pub fn derivative<F: Float + Copy + 'static, const DIM: usize>(bezier_curve: &Be
     let mut prev = &bezier_curve[0];
     let n:F = bezier_curve.len().as_();
     bezier_curve[1..].iter().map(|next|{
-        let diff = next.sub(prev)._mul_scalar(n);
+        let diff = ((c1(next)-c1(prev)) * full1(n)).into_arr();
         prev = next;
         diff
     }).collect()
 }
 
 /**Evaluates the derivative curve at a specific `t`, without computing the derivative curve explicitly. https://pages.mtu.edu/~shene/COURSES/cs3621/NOTES/spline/Bezier/bezier-der.html*/
-pub fn tangent<F: NumAssign + Float + Copy + 'static, const DIM: usize>(bezier_curve: &Bezier<F, DIM>, t:F) -> [F; DIM] where usize: AsPrimitive<F> {
+pub fn tangent<F: NumAssign + Float +MulAdd<Output=F> + Copy + 'static, const DIM: usize>(bezier_curve: &Bezier<F, DIM>, t:F) -> [F; DIM] where usize: AsPrimitive<F> {
     let n:F = bezier_curve.len().as_();
-    pos_with(|i| bezier_curve[i+1].sub(&bezier_curve[i])._mul_scalar(n),bezier_curve.len()-1,t)
+    pos_with(|i| ((bezier_curve[i+1].c()-bezier_curve[i].c())*full1(n)).into_arr(),bezier_curve.len()-1,t)
 }
 
 
@@ -79,14 +80,14 @@ pub fn de_casteljau<F: NumAssign + MulAdd<Output=F> + Float + Copy + 'static, co
     let mut prev = &bezier_curve[0];
     let d = F::one() - t;
     for next in &bezier_curve[1..] {
-        out.push(prev.linear_comb(d, next, t));
+        out.push(mul_add1(prev.c(),full1(d), next.c()*full1(t)).into_arr());
         prev = next;
     }
     let mut from = 1;
     let mut to = out.len();
     while from < to {
         for i in from..to {
-            let comb = out[i - 1].linear_comb(d, &out[i], t);
+            let comb = mul_add1(out[i - 1].c(),full1(d), out[i].c()*full1(t)).into_arr();
             out.push(comb);
         }
         from = to + 1;
@@ -101,14 +102,14 @@ pub fn de_casteljau_in_half<F: NumAssign + MulAdd<Output=F> + MulAssign + Float 
     let mut prev = &bezier_curve[0];
     let half = F::one() / (F::one() + F::one());
     for next in &bezier_curve[1..] {
-        out.push(prev.add_mul_scalar(next, half));
+        out.push(prev.c().mul_add_scalar(next.c(), half));
         prev = next;
     }
     let mut from = 1;
     let mut to = out.len();
     while from < to {
         for i in from..to {
-            let mut comb = out[i - 1].add_mul_scalar(&out[i], half);
+            let mut comb = out[i - 1].c().mul_add_scalar(out[i].c(), half);
             out.push(comb);
         }
         from = to + 1;

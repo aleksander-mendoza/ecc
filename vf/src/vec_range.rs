@@ -1,8 +1,7 @@
 use std::fmt::Debug;
 use std::ops::{Add, Bound, Div, Mul, Range, RangeBounds, Rem, Sub};
-use num_traits::{One, Zero};
-use crate::{VectorFieldOne, VectorFieldPartialOrd, VectorFieldSub};
-use crate::shape::Shape;
+use num_traits::{MulAdd, One, Zero};
+use crate::*;
 
 pub fn foreach2d<T: Copy>(range: &Range<[T; 2]>, mut f: impl FnMut([T; 2])) where Range<T>: Iterator<Item=T> {
     for p0 in range.start[0]..range.end[0] {
@@ -13,24 +12,24 @@ pub fn foreach2d<T: Copy>(range: &Range<[T; 2]>, mut f: impl FnMut([T; 2])) wher
 }
 
 pub fn contains<T: Copy + PartialOrd, const DIM: usize>(range: &Range<[T; DIM]>, element: &[T; DIM]) -> bool {
-    range.start.all_le(element) && element.all_lt(&range.end)
+    range.start.all_le(element.c()) && element.all_lt(&range.end)
 }
 
 pub fn size<T: Copy + Sub<Output=T> + One + Mul<Output=T>, const DIM: usize>(range: &Range<[T; DIM]>) -> T {
-    shape(range).product()
+    shape(range).prod()
 }
 
 pub fn shape<T: Copy + Sub<Output=T>, const DIM: usize>(range: &Range<[T; DIM]>) -> [T; DIM] {
-    range.end.sub(&range.start)
+    range.end.sub(range.start)
 }
 
 pub fn relative_to<T: Copy + Sub<Output=T>, const DIM: usize>(range: &Range<[T; DIM]>, element: &[T; DIM]) -> [T; DIM] {
-    element.sub(&range.start)
+    (element.c()-range.start.c()).into_arr()
 }
 
-pub fn translate<T: Debug+Rem<Output=T> + Div<Output=T> + Mul<Output=T> + Add<Output=T> + Copy + Zero + One + Ord + Sub<Output=T> + std::cmp::PartialOrd, const DIM: usize>(range: &Range<[T; DIM]>, element: &[T; DIM]) -> Option<T> {
+pub fn translate<T: Debug+Rem<Output=T> + Div<Output=T> + MulAdd<Output=T> + Copy + Zero + One + Ord + Sub<Output=T> + std::cmp::PartialOrd, const DIM: usize>(range: &Range<[T; DIM]>, element: &[T; DIM]) -> Option<T> {
     if contains(range, element) {
-        Some(shape(range).idx(&relative_to(range, element)))
+        Some(shape(range).idx(relative_to(range, element)))
     } else {
         None
     }

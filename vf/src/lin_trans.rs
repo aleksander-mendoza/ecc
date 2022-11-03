@@ -1,8 +1,7 @@
 use std::ops::{Add, AddAssign, MulAssign, Neg, Sub};
 use std::process::Output;
 use num_traits::{Float, FloatConst, Num};
-use crate::mat_arr::{mat2_add_column, mat3_add_column, mat3x2_add_row, mat4x3_add_row, mul_row_wise_};
-use crate::{mat3_to_mat4, VectorFieldAddAssign, VectorFieldMulAddAssign, VectorFieldMulAdd, xyz4, xyz4_};
+use crate::*;
 
 pub type Translation<S, const DIM: usize> = [S; DIM];
 pub type Scaling<S, const DIM: usize> = [S; DIM];
@@ -187,9 +186,9 @@ pub fn rotation4d_about(angle_in_radians: f32, axis: &[f32; 3]) -> [[f32; 4]; 4]
 pub fn translate4d_(mat: &mut [[f32;4]; 4],translation_vector:&[f32;3]){
     let [r0,r1,r2,r3] = mat;
     let &[x,y,z] = translation_vector;
-    xyz4_(r0).add_mul_scalar_(xyz4(r3),x);
-    xyz4_(r1).add_mul_scalar_(xyz4(r3),y);
-    xyz4_(r2).add_mul_scalar_(xyz4(r3),z);
+    xyz4_(r0).mul_add_scalar_(xyz4(r3).c(),x);
+    xyz4_(r1).mul_add_scalar_(xyz4(r3).c(),y);
+    xyz4_(r2).mul_add_scalar_(xyz4(r3).c(),z);
     let q = r3[3];
     r0[3]+=x*q;
     r1[3]+=y*q;
@@ -275,97 +274,97 @@ pub fn orthographic_proj_cm<F: Float + Copy>(bottom: F, top: F, left: F, right: 
         [-(right + left) / rl, -(top + bottom) / tb, -(far + near) / nf, o],
     ]
 }
-
-pub trait AffineTransformation<S, const DIM: usize>: Clone {
-    fn compose_(&mut self, other: &Self) -> &mut Self;
-    fn compose(&self, other: &Self) -> Self {
-        let mut s = self.clone();
-        s.compose_(other);
-        s
-    }
-    fn inverse_(&mut self) -> &mut Self;
-    fn inverse(&self) -> Self {
-        let mut s = self.clone();
-        s.inverse_();
-        s
-    }
-    fn scale_(&mut self, scaling: &Scaling<S, DIM>) -> &mut Self;
-    fn scale(&self, scaling: &Scaling<S, DIM>) -> Self {
-        let mut s = self.clone();
-        s.scale_(scaling);
-        s
-    }
-    fn rotate_(&mut self, rot: &EulerRotation<S, DIM>) -> &mut Self;
-    fn rotate(&self, rot: &EulerRotation<S, DIM>) -> Self {
-        let mut s = self.clone();
-        s.rotate_(rot);
-        s
-    }
-    fn translate_(&mut self, translation: &Translation<S, DIM>) -> &mut Self;
-    fn translate(&self, translation: &Translation<S, DIM>) -> Self {
-        let mut s = self.clone();
-        s.translate_(translation);
-        s
-    }
-}
-
-/**A linear transformation resulting from first applying scaling, then rotation to align with axis, then translation*/
-#[derive(Clone, Debug)]
-pub struct AffTrans<S, const DIM: usize> where [(); { DIM - 1 }]: Sized {
-    /**This holds both scaling and rotation information. Each vector's direction represents rotation axis,
-                                         and it's length represents scaling. The last axis must be perpendicular to all other, which means
-                                         that there are only DIM - 1 degrees of freedom. Therefore we do not store the last vector here.
-                                         It can be computer as needed. Once computed, we obtain an orthogonal axis.*/
-    axis: AlignmentAxis<S, DIM>,
-    translation: Translation<S, DIM>,
-}
-
-impl<S: Copy + MulAssign + AddAssign, const DIM: usize> AffineTransformation<S, DIM> for AffTrans<S, DIM> where [(); { DIM - 1 }]: Sized {
-    fn compose_(&mut self, other: &Self) -> &mut Self {
-        todo!()
-    }
-
-    fn inverse_(&mut self) -> &mut Self {
-        todo!()
-    }
-
-    fn inverse(&self) -> Self {
-        todo!()
-    }
-
-    fn scale_(&mut self, scaling: &Scaling<S, DIM>) -> &mut Self {
-        mul_row_wise_(&mut self.axis, scaling);
-        self
-    }
-    fn rotate_(&mut self, rot: &EulerRotation<S, DIM>) -> &mut Self {
-        // self.axis
-        self
-    }
-
-    fn translate_(&mut self, translation: &Translation<S, DIM>) -> &mut Self {
-        self.translation.add_(translation);
-        self
-    }
-}
-
-impl AffTrans<f32, 2> {
-    pub fn rot2(&self) -> [[f32; 2]; 2] {
-        rotation2d_from_axis(self.axis[0])
-    }
-    pub fn mat3(&self) -> [[f32; 3]; 3] {
-        let mut mat = self.rot2();
-        let mat = mat2_add_column(mat, self.translation);
-        mat3x2_add_row(mat, [0., 0., 1.])
-    }
-}
-
-impl AffTrans<f32, 3> {
-    pub fn rot3(&self) -> [[f32; 3]; 3] {
-        rotation3d_from_axis(self.axis)
-    }
-    pub fn mat4(&self) -> [[f32; 4]; 4] {
-        let mut mat = self.rot3();
-        let mat = mat3_add_column(mat, self.translation);
-        mat4x3_add_row(mat, [0., 0., 0., 1.])
-    }
-}
+//
+// pub trait AffineTransformation<S, const DIM: usize>: Clone {
+//     fn compose_(&mut self, other: &Self) -> &mut Self;
+//     fn compose(&self, other: &Self) -> Self {
+//         let mut s = self.clone();
+//         s.compose_(other);
+//         s
+//     }
+//     fn inverse_(&mut self) -> &mut Self;
+//     fn inverse(&self) -> Self {
+//         let mut s = self.clone();
+//         s.inverse_();
+//         s
+//     }
+//     fn scale_(&mut self, scaling: &Scaling<S, DIM>) -> &mut Self;
+//     fn scale(&self, scaling: &Scaling<S, DIM>) -> Self {
+//         let mut s = self.clone();
+//         s.scale_(scaling);
+//         s
+//     }
+//     fn rotate_(&mut self, rot: &EulerRotation<S, DIM>) -> &mut Self;
+//     fn rotate(&self, rot: &EulerRotation<S, DIM>) -> Self {
+//         let mut s = self.clone();
+//         s.rotate_(rot);
+//         s
+//     }
+//     fn translate_(&mut self, translation: &Translation<S, DIM>) -> &mut Self;
+//     fn translate(&self, translation: &Translation<S, DIM>) -> Self {
+//         let mut s = self.clone();
+//         s.translate_(translation);
+//         s
+//     }
+// }
+//
+// /**A linear transformation resulting from first applying scaling, then rotation to align with axis, then translation*/
+// #[derive(Clone, Debug)]
+// pub struct AffTrans<S, const DIM: usize> where [(); { DIM - 1 }]: Sized {
+//     /**This holds both scaling and rotation information. Each vector's direction represents rotation axis,
+//                                          and it's length represents scaling. The last axis must be perpendicular to all other, which means
+//                                          that there are only DIM - 1 degrees of freedom. Therefore we do not store the last vector here.
+//                                          It can be computer as needed. Once computed, we obtain an orthogonal axis.*/
+//     axis: AlignmentAxis<S, DIM>,
+//     translation: Translation<S, DIM>,
+// }
+//
+// impl<S: Copy + MulAssign + AddAssign, const DIM: usize> AffineTransformation<S, DIM> for AffTrans<S, DIM> where [(); { DIM - 1 }]: Sized {
+//     fn compose_(&mut self, other: &Self) -> &mut Self {
+//         todo!()
+//     }
+//
+//     fn inverse_(&mut self) -> &mut Self {
+//         todo!()
+//     }
+//
+//     fn inverse(&self) -> Self {
+//         todo!()
+//     }
+//
+//     fn scale_(&mut self, scaling: &Scaling<S, DIM>) -> &mut Self {
+//         mul_row_wise_(&mut self.axis, scaling);
+//         self
+//     }
+//     fn rotate_(&mut self, rot: &EulerRotation<S, DIM>) -> &mut Self {
+//         // self.axis
+//         self
+//     }
+//
+//     fn translate_(&mut self, translation: &Translation<S, DIM>) -> &mut Self {
+//         self.translation.add_(translation);
+//         self
+//     }
+// }
+//
+// impl AffTrans<f32, 2> {
+//     pub fn rot2(&self) -> [[f32; 2]; 2] {
+//         rotation2d_from_axis(self.axis[0])
+//     }
+//     pub fn mat3(&self) -> [[f32; 3]; 3] {
+//         let mut mat = self.rot2();
+//         let mat = mat2_add_column(mat, self.translation);
+//         mat3x2_add_row(mat, [0., 0., 1.])
+//     }
+// }
+//
+// impl AffTrans<f32, 3> {
+//     pub fn rot3(&self) -> [[f32; 3]; 3] {
+//         rotation3d_from_axis(self.axis)
+//     }
+//     pub fn mat4(&self) -> [[f32; 4]; 4] {
+//         let mut mat = self.rot3();
+//         let mat = mat3_add_column(mat, self.translation);
+//         mat4x3_add_row(mat, [0., 0., 0., 1.])
+//     }
+// }
