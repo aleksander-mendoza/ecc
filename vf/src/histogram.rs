@@ -4,18 +4,26 @@ use crate::*;
 use crate::from_usize::FromUsize;
 
 
-pub fn histogram(image: &[u8], stride: usize) -> Box<[u32; 256]> {
+pub fn histogram(image: &[u8], stride: usize, source_mask:impl Fn(usize)->bool) -> Box<[u32; 256]> {
     let mut slice = Box::new([0;256]);
-    image.iter().step_by(stride).cloned().for_each(|pixel| slice[pixel as usize] += 1);
+    for (idx,pixel) in image.iter().step_by(stride).cloned().enumerate() {
+        if source_mask(idx) {
+            slice[pixel as usize] += 1
+        }
+    }
     slice
 }
 
 /**`image` shape is `[height,width,channels]`*/
-pub fn histograms(image: &[u8], channels: usize) -> Box<[[u32; 256]]> {
+pub fn histograms(image: &[u8], channels: usize, source_mask:impl Fn(usize)->bool) -> Box<[[u32; 256]]> {
     let mut slice = vec![[0u32; 256];channels];
     for channel in 0..channels {
         let subslice = &mut slice[channel];
-        image[channel..].iter().step_by(channels).cloned().for_each(|pixel| subslice[pixel as usize] += 1);
+        for (idx, pixel) in image[channel..].iter().step_by(channels).cloned().enumerate() {
+            if source_mask(idx) {
+                subslice[pixel as usize] += 1;
+            }
+        }
     }
     slice.into_boxed_slice()
 }
@@ -54,31 +62,38 @@ pub fn normalize_histograms(histograms: &[u32]) -> Box<[f32]> {
     o.into_boxed_slice()
 }
 
-pub fn match_histogram(source: &[u8], src_stride: usize, reference: &[u8], ref_stride: usize) -> Vec<u8> {
+pub fn match_histogram(source: &[u8], src_stride: usize, reference: &[u8], ref_stride: usize, source_mask:impl Fn(usize)->bool) -> Vec<u8> {
     let mut o = Vec::with_capacity(source.len());
     unsafe{o.set_len(o.capacity())}
-    match_histogram_(source, src_stride, reference, ref_stride, &mut o, src_stride);
+    match_histogram_(source, src_stride, reference, ref_stride, &mut o, src_stride, source_mask);
     o
 }
 
-pub fn match_histogram_(source: &[u8], src_stride: usize, reference: &[u8], ref_stride: usize, output: &mut [u8], out_stride: usize) {
-    let hist_ref = _normalize_histogram(histogram(reference, ref_stride));
-    match_precomputed_histogram_(source, src_stride, hist_ref.as_slice(), output, out_stride)
+pub fn match_histogram_(source: &[u8], src_stride: usize, reference: &[u8], ref_stride: usize, output: &mut [u8], out_stride: usize, source_mask:impl Fn(usize)->bool) {
+    let hist_ref = _normalize_histogram(histogram(reference, ref_stride, &source_mask));
+    match_precomputed_histogram_(source, src_stride, hist_ref.as_slice(), output, out_stride, source_mask)
 }
 
-pub fn match_precomputed_histogram(source: &[u8], src_stride: usize, hist_ref: &[f32]) -> Vec<u8> {
+pub fn match_precomputed_histogram(source: &[u8], src_stride: usize, hist_ref: &[f32], source_mask:impl Fn(usize)->bool) -> Vec<u8> {
     let mut o = Vec::with_capacity(source.len());
     unsafe{o.set_len(o.capacity())}
-    match_precomputed_histogram_(source, src_stride, hist_ref, &mut o, src_stride);
+    match_precomputed_histogram_(source, src_stride, hist_ref, &mut o, src_stride, source_mask);
     o
 }
 
-pub fn match_precomputed_histogram_(source: &[u8], src_stride: usize, hist_ref: &[f32], output: &mut [u8], out_stride: usize) {
-    let hist_src = histogram(source, src_stride);
-    match_2precomputed_histogram_(source, src_stride, hist_src.as_slice(), &hist_ref, output, out_stride)
+pub fn match_precomputed_histogram_(source: &[u8], src_stride: usize, hist_ref: &[f32], output: &mut [u8], out_stride: usize, source_mask:impl Fn(usize)->bool) {
+    let hist_src = histogram(source, src_stride, &source_mask);
+    match_2precomputed_histogram_(source, src_stride, hist_src.as_slice(), &hist_ref, output, out_stride, source_mask)
 }
 
-pub fn match_2precomputed_histogram_(source: &[u8], src_stride: usize, hist_src: &[u32], hist_ref: &[f32], output: &mut [u8], out_stride: usize) {
+/**You can use source_mask to apply histogram matching partially only to a masked region of image. `source_mask(idx)` takes as input `idx=y*img_width+x`.
+ IMPORTANT! `hist_src` must sum up to
+```
+hist_src.iter().sum()==source.iter().step_by(src_stride).enumerate().filter(|(idx,pix_val)|source_mask(idx)).count()
+```
+so it must be recomputed specifically for every given mask
+ */
+pub fn match_2precomputed_histogram_(source: &[u8], src_stride: usize, hist_src: &[u32], hist_ref: &[f32], output: &mut [u8], out_stride: usize, source_mask:impl Fn(usize)->bool) {
     debug_assert_eq!(hist_ref.len(), 256);
     debug_assert_eq!(hist_src.len(), 256);
 
@@ -125,20 +140,26 @@ pub fn match_2precomputed_histogram_(source: &[u8], src_stride: usize, hist_src:
     // If at this point i_ref < 256, that can only be due to floating-point imprecision. (which is unlikely as we use f64)
     // A few pixels might be improperly replaced but that's fine. Nobody will notice.
 
-    'outer: for (src_i, out_i) in source.iter().step_by(src_stride).cloned().zip(output.iter_mut().step_by(out_stride)) {
-        let (mut offset, end) = stack_offsets[src_i as usize];
-        while offset < end {
-            let (ref_i, to_replace) = stack[offset];
-            if to_replace > 0 {
-                *out_i = ref_i;
-                stack[offset].1 = to_replace - 1;
-                continue 'outer;
-            } else {
-                offset += 1;
-                stack_offsets[src_i as usize].0 = offset;
+    'outer: for ((idx,src_i), out_i) in source
+        .iter().step_by(src_stride).cloned()
+        .enumerate()
+        .zip(output.iter_mut().step_by(out_stride)) {
+        if source_mask(idx) { // we can partially apply histogram matching only to a masked region of an image
+            let (mut offset, end) = stack_offsets[src_i as usize];
+            while offset < end {
+                let (ref_i, to_replace) = stack[offset];
+                if to_replace > 0 {
+                    *out_i = ref_i;
+                    stack[offset].1 = to_replace - 1;
+                    continue 'outer;
+                } else {
+                    offset += 1;
+                    stack_offsets[src_i as usize].0 = offset;
+                }
             }
+            // coming here should rarely happen. Only possible due to FP imprecision. Usually we hit continue statement
         }
-        *out_i = src_i; // welp... this should rarely happen. Only possible due to FP imprecision.
+        *out_i = src_i;
     }
 }
 
@@ -166,26 +187,26 @@ pub fn blend_(scalar1: f32, histogram1: &[f32], scalar2: f32, histogram2: &[f32]
 }
 
 /**shape == [height, width, channels]*/
-pub fn match_images(source: &[u8], src_shape: &[usize; 3], reference: &[u8], ref_shape: &[usize; 3]) -> Box<[u8]> {
+pub fn match_images(source: &[u8], src_shape: &[usize; 3], reference: &[u8], ref_shape: &[usize; 3], source_mask:impl Fn(usize)->bool) -> Box<[u8]> {
     assert_eq!(src_shape[2], ref_shape[2]);
     let channels = src_shape[2];
     let len = src_shape[0] * src_shape[1];
     let mut out = Vec::<u8>::with_capacity(len * channels);
     unsafe{out.set_len(out.capacity())}
     for channel in 0..channels {
-        match_histogram_(&source[channel..], channels, &reference[channel..], channels, &mut out[channel..], channels);
+        match_histogram_(&source[channel..], channels, &reference[channel..], channels, &mut out[channel..], channels, &source_mask);
     }
     out.into_boxed_slice()
 }
 
 /**shape == [height, width, channels],  hist_ref:[channels, 256]*/
-pub fn match_precomputed_images(source: &[u8], src_shape: &[usize; 3], hist_ref: &[f32]) -> Box<[u8]> {
-    let hist_src = histograms(source, src_shape[2]);
-    match_2precomputed_images(source, src_shape, hist_src.flatten(), hist_ref)
+pub fn match_precomputed_images(source: &[u8], src_shape: &[usize; 3], hist_ref: &[f32], source_mask:impl Fn(usize)->bool) -> Box<[u8]> {
+    let hist_src = histograms(source, src_shape[2], &source_mask);
+    match_2precomputed_images(source, src_shape, hist_src.flatten(), hist_ref, source_mask)
 }
 
 /**shape == [height, width, channels], hist_src:[channels,256], hist_ref:[channels, 256]*/
-pub fn match_2precomputed_images(source: &[u8], src_shape: &[usize; 3], hist_src: &[u32], hist_ref: &[f32]) -> Box<[u8]> {
+pub fn match_2precomputed_images(source: &[u8], src_shape: &[usize; 3], hist_src: &[u32], hist_ref: &[f32], source_mask:impl Fn(usize)->bool) -> Box<[u8]> {
     assert_eq!(hist_src.len(), hist_ref.len());
     let channels = src_shape[2];
     let len = src_shape[0] * src_shape[1];
@@ -193,7 +214,7 @@ pub fn match_2precomputed_images(source: &[u8], src_shape: &[usize; 3], hist_src
     unsafe{out.set_len(out.capacity())}
     for channel in 0..channels {
         let hist_offset = channel * 256;
-        match_2precomputed_histogram_(&source[channel..], channels, &hist_src[hist_offset..hist_offset + 256], &hist_ref[hist_offset..hist_offset + 256], &mut out[channel..], channels);
+        match_2precomputed_histogram_(&source[channel..], channels, &hist_src[hist_offset..hist_offset + 256], &hist_ref[hist_offset..hist_offset + 256], &mut out[channel..], channels, &source_mask);
     }
     out.into_boxed_slice()
 }
@@ -264,15 +285,15 @@ pub fn find_closest_n(hist_src: &[f32], batch: usize, references: &[f32]) -> (us
 }
 
 /**shape == [height, width, channels], references:[batch,channels,256]*/
-pub fn match_best_images(source: &[u8], src_shape: &[usize; 3], batch: usize, references: &[f32]) -> (Box<[u8]>, usize, f32) {
+pub fn match_best_images(source: &[u8], src_shape: &[usize; 3], batch: usize, references: &[f32], source_mask:impl Fn(usize)->bool) -> (Box<[u8]>, usize, f32) {
     assert_eq!(source.len(), src_shape.iter().product());
     let channels = src_shape[2];
-    let hist_src = histograms(source, channels);
+    let hist_src = histograms(source, channels, &source_mask);
     let channels256 = channels * 256;
     let (best_ref_idx, min_square_diff) = find_closest(&hist_src, batch, references);
     let ref_offset = best_ref_idx * channels256;
     let best_ref_hists = &references[ref_offset..ref_offset + channels256];
-    (match_2precomputed_images(source, src_shape, hist_src.flatten(), best_ref_hists), best_ref_idx, min_square_diff)
+    (match_2precomputed_images(source, src_shape, hist_src.flatten(), best_ref_hists, source_mask), best_ref_idx, min_square_diff)
 }
 
 /**Find if there exists `x1` and `x2` such that
@@ -376,7 +397,7 @@ mod tests {
     fn test6() {
         let s = vec![0, 1, 2];
         let r = vec![3, 4, 5];
-        let o = match_images(&s, &[s.len(), 1, 1], &r, &[r.len(), 1, 1]);
+        let o = match_images(&s, &[s.len(), 1, 1], &r, &[r.len(), 1, 1], |_|true);
         assert_eq!(o.as_ref(), &[3, 4, 5]);
     }
 
@@ -384,7 +405,7 @@ mod tests {
     fn test5() {
         let s = vec![0, 1, 2, 2, 5, 7, 3, 4, 6];
         let r = vec![3, 4, 5];
-        let o = match_images(&s, &[s.len(), 1, 1], &r, &[r.len(), 1, 1]);
+        let o = match_images(&s, &[s.len(), 1, 1], &r, &[r.len(), 1, 1], |_|true);
         assert_eq!(o.as_ref(), &[3, 3, 3, 4, 5, 5, 4, 4, 5]);
     }
 
