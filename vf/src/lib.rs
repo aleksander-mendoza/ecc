@@ -31,7 +31,7 @@ pub mod vec_range;
 pub mod from_usize;
 pub mod mat_slice;
 
-pub mod algebraic_inductive_inference;
+pub mod cayley;
 pub mod bezier;
 pub mod collision;
 pub mod blas_safe;
@@ -74,5 +74,10 @@ mod lin_alg;
 pub use lin_alg::*;
 mod quat;
 pub mod histogram;
+mod num;
+mod vec;
+
+pub use vec::*;
+pub use num::*;
 
 pub use quat::*;
