@@ -6,8 +6,4 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-gl = "*"
-thiserror = "*"
-glutin = "*"
-imagine = "0.0.5"
 vf = {path="../vf"}

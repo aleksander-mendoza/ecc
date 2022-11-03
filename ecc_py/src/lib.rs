@@ -1,9 +1,11 @@
 #![feature(option_result_contains)]
+#![feature(slice_flatten)]
 
 mod slice_box;
 mod util;
 
 use std::ops::Range;
+use std::str::FromStr;
 use numpy::{IntoPyArray, PyArray1, PyArray2, PyArray3, PyArray4, PyArray6, PyArrayDyn};
 use pyo3::prelude::*;
 use pyo3::{wrap_pyfunction, wrap_pymodule, PyObjectProtocol, PyNativeType};
@@ -11,8 +13,10 @@ use pyo3::exceptions::PyValueError;
 use pyo3::PyResult;
 use pyo3::types::PyList;
 use vf::soft_wta::*;
-use vf::{ArrayCast, conv, VecCast, VectorField, VectorFieldOne};
+use vf::{ArrayCast, conv, VecCast, VectorField, VectorFieldDivAssign, VectorFieldMul, VectorFieldMulAssign, VectorFieldOne, VectorFieldZero};
 use vf::{arr2, arr3, slice_as_arr, tup2, tup3, tup4, tup6};
+use vf::dynamic_layout::shape;
+use vf::init::InitEmptyWithCapacity;
 use crate::util::{arrX, py_any_as_numpy};
 
 
@@ -568,31 +572,121 @@ pub fn rand_set(py:Python, cardinality: usize, from_inclusive: usize, to_exclusi
 }
 
 #[pyfunction]
-#[text_signature = "(source_image, reference_image)"]
+#[text_signature = "(source_image, reference_image, source_mask)"]
 /// images are of shape `[height, width, channels]`
-pub fn match_histogram<'py>(source: &'py PyArray3<u8>, reference: &'py PyArray3<u8>) -> PyResult<&'py PyArray3<u8>>{
+pub fn match_histogram<'py>(source: &'py PyArray3<u8>, reference: &'py PyArray3<u8>, source_mask:Option<PyObject>) -> PyResult<&'py PyArray3<u8>>{
     let src_shape = source.shape();
     let ref_shape = reference.shape();
-    assert!(src_shape.len()<=3,"Shape should be [height,width,channels]");
-    assert!(2<=src_shape.len(), "Shape should be [height,width,channels]");
-    assert!(ref_shape.len()<=3,"Shape should be [height,width,channels]");
-    assert!(2<=ref_shape.len(), "Shape should be [height,width,channels]");
+    assert_eq!(src_shape.len(),3,"Shape should be [height,width,channels]");
+    assert_eq!(ref_shape.len(),3,"Shape should be [height,width,channels]");
     let channels = src_shape.get(2).cloned().unwrap_or(1);
     assert_eq!(channels, ref_shape.get(2).cloned().unwrap_or(1), "Number of channels does not match");
     let src_shape = [src_shape[0],src_shape[1],channels];
     let ref_shape = [ref_shape[0],ref_shape[1],channels];
     let src = unsafe{source.as_slice()?};
     let rfc = unsafe{reference.as_slice()?};
-    let out = vf::histogram::match_images(src,&src_shape,rfc,&ref_shape);
+    let out = if let Some(mask) = source_mask {
+        let mask:&PyArray2<bool> = mask.extract(source.py())?;
+        let msk_shape = mask.shape();
+        assert_eq!(msk_shape,&src_shape[..2],"Mask shape should match source shape");
+        let msk = unsafe{mask.as_slice()?};
+        vf::histogram::match_images(src, &src_shape, rfc, &ref_shape,|i|msk[i] )
+    }else{
+        vf::histogram::match_images(src, &src_shape, rfc, &ref_shape, |_|true)
+    };
     let v = PyArray1::from_vec(source.py(),out.into_vec());
+    v.reshape(src_shape)
+}
+
+#[pyfunction]
+#[text_signature = "(source_image, reference_hist, source_mask)"]
+/// `source_image` is of shape `[height, width, channels]`, `reference_hist` is of shape `[channels, 256]`
+pub fn match_precomputed_histogram<'py>(source: &'py PyArray3<u8>, reference_hist: &'py PyArray2<f32>, source_mask:Option<PyObject>) -> PyResult<&'py PyArray3<u8>>{
+    let src_shape = source.shape();
+    let ref_shape = reference_hist.shape();
+    assert_eq!(src_shape.len(),3,"Shape should be [height,width,channels]");
+    assert_eq!(ref_shape.len(),2,"Shape should be [channels, 256]");
+    let channels = src_shape[2];
+    assert_eq!(channels, ref_shape[0], "Number of channels does not match");
+    let src_shape = [src_shape[0],src_shape[1],channels];
+    let src = unsafe{source.as_slice()?};
+    let rfc = unsafe{reference_hist.as_slice()?};
+    let out = if let Some(mask) = source_mask {
+        let mask:&PyArray2<bool> = mask.extract(source.py())?;
+        let msk_shape = mask.shape();
+        assert_eq!(msk_shape,&src_shape[..2],"Mask shape should match source shape");
+        let msk = unsafe{mask.as_slice()?};
+        vf::histogram::match_precomputed_images(src, &src_shape, rfc, |i|msk[i] )
+    }else{
+        vf::histogram::match_precomputed_images(src, &src_shape, rfc,  |_|true)
+    };
+    let v = PyArray1::from_vec(source.py(),out.to_vec());
     v.reshape(src_shape)
 }
 
 
 #[pyfunction]
-#[text_signature = "(source_image, reference_histograms)"]
+#[text_signature = "(source_image, source_mask)"]
+/// `source_image` shape `[height, width, channels]`
+pub fn image_histogram<'py>(source: &'py PyArray3<u8>, source_mask:Option<PyObject>) -> PyResult<&'py PyArray2<u32>> {
+    let src_shape = source.shape();
+    assert_eq!(src_shape.len(),3,"Shape should be [height,width,channels]");
+    let hist_shape = [src_shape[2],256];
+    let src = unsafe{source.as_slice()?};
+    let hist = if let Some(mask) = source_mask {
+        let mask:&PyArray2<bool> = mask.extract(source.py())?;
+        let msk_shape = mask.shape();
+        assert_eq!(msk_shape,&src_shape[..2],"Mask shape should match source shape");
+        let msk = unsafe{mask.as_slice()?};
+        vf::histogram::histograms(src, src_shape[2], |i|msk[i] )
+    }else{
+        vf::histogram::histograms(src, src_shape[2],   |_|true)
+    };
+    let hist = vf::flatten_box(hist);
+    let v = PyArray1::from_vec(source.py(),hist.into_vec());
+    v.reshape(hist_shape)
+}
+
+
+#[pyfunction]
+#[text_signature = "(histogram)"]
+/// `histogram` shape `[channels, 256]`
+pub fn normalize_histogram<'py>(histogram: &'py PyArray2<u32>) -> PyResult<&'py PyArray2<f32>> {
+    let src_shape = histogram.shape();
+    assert_eq!(src_shape.len(),2,"Shape should be [channels, 256]");
+    let hist_shape = [src_shape[0],src_shape[1]];
+    let src = unsafe{histogram.as_slice()?};
+    let hist = vf::histogram::normalize_histograms(src);
+    let v = PyArray1::from_vec(histogram.py(),hist.into_vec());
+    v.reshape(hist_shape)
+}
+#[pyfunction]
+#[text_signature = "(histogram, ratio)"]
+/// `histogram` shape `[channels, 256]`.
+/// Find if there exists `c`, `x1` and `w` such that
+/// ```
+/// (y_max-y_min)/w >= ratio
+/// ```
+/// where
+/// ```
+/// y_max=histogram[c,x..x+w].max();
+/// y_min=histogram[c,x].max(histogram[c,x+w]);
+/// ```
+/// and `ratio>1`, `w>0`. Return `(c,x,x+w)`. If no such constants exist then returns `(0,0,0)`
+pub fn find_histogram_anomaly<'py>(histogram: &'py PyArray2<f32>, ratio:f32) -> PyResult<Vec<(usize,isize,isize)>> {
+    assert_eq!(histogram.ndim(),2,"Shape should be [channels, 256]");
+    assert_eq!(histogram.shape()[1],256,"Shape should be [channels, 256]");
+    let src = unsafe{histogram.as_slice()?};
+    let v = vf::histogram::find_n_histograms_anomaly(src, ratio);
+    Ok(v.into_iter().map(|(channel,Range{ start, end })|(channel,start,end)).collect())
+}
+
+
+
+#[pyfunction]
+#[text_signature = "(source_image, reference_histograms, source_mask)"]
 /// `source_image` shape `[height, width, channels]`, `reference_histograms` shape `[batch,channels,256]`, return `(matched_image,best_ref_idx,best_square_dist)`
-pub fn match_best_images<'py>(source: &'py PyArray3<u8>, references: &'py PyArray3<f32>) -> PyResult<(&'py PyArray3<u8>,usize,f32)> {
+pub fn match_best_images<'py>(source: &'py PyArray3<u8>, references: &'py PyArray3<f32>, source_mask:Option<PyObject>) -> PyResult<(&'py PyArray3<u8>,usize,f32)> {
     let src_shape = source.shape();
     let ref_shape = references.shape();
     assert_eq!(src_shape.len(),3,"Shape should be [height,width,channels]");
@@ -603,16 +697,178 @@ pub fn match_best_images<'py>(source: &'py PyArray3<u8>, references: &'py PyArra
     let ref_shape = [ref_shape[0],ref_shape[1],ref_shape[2]];
     let src = unsafe{source.as_slice()?};
     let rfc = unsafe{references.as_slice()?};
-    let (out,best_ref_idx,square_dist) = vf::histogram::match_best_images(src,&src_shape,ref_shape[0],rfc);
+
+    let (out,best_ref_idx,square_dist) = if let Some(mask) = source_mask {
+        let mask:&PyArray2<bool> = mask.extract(source.py())?;
+        let msk_shape = mask.shape();
+        assert_eq!(msk_shape,&src_shape[..2],"Mask shape should match source shape");
+        let msk = unsafe{mask.as_slice()?};
+        vf::histogram::match_best_images(src, &src_shape, ref_shape[0], rfc,|i|msk[i] )
+    }else{
+        vf::histogram::match_best_images(src, &src_shape, ref_shape[0],rfc,  |_|true)
+    };
     let v = PyArray1::from_vec(source.py(),out.into_vec());
     v.reshape(src_shape).map(|a|(a,best_ref_idx,square_dist))
 }
 
 
+#[pyfunction]
+#[text_signature = "(source_image, reference_histograms, blend_policy, source_mask)"]
+/// `source_image` shape `[height, width, channels]`, `reference_histograms` shape `[batch,channels,256]`, return `(matched_image,best_ref_idx,best_square_dist)`.
+/// Before matching, it automatically blends histograms proportionately to their distance. Minimum possible distance is 0, maximum is 1.
+/// blend_policy is one of "PROP_TO_SQUARED", "PROP_TO_DIST",  "PROP_TO_AREA_DIFF", "INV_PROP_TO_SQUARED", "INV_PROP_TO_DIST","INV_PROP_TO_AREA_DIFF", "0.1234". Proportional (PROP)
+/// means that we blend `source*distance + reference * (1-distance)`. Inverse proportional (INV_PROP) means ``source*(1-distance) + reference * distance``.
+/// You can also put there some constant like "0.1234" or anything else between 0 and 1.
+pub fn blend_and_match_best_images<'py>(source: &'py PyArray3<u8>, references: &'py PyArray3<f32>, blend_policy:String, source_mask:Option<PyObject>) -> PyResult<(&'py PyArray3<u8>,usize,f32,f32)> {
+    let src_shape = source.shape();
+    let ref_shape = references.shape();
+    assert_eq!(src_shape.len(),3,"Source image shape should be [height,width,channels]");
+    assert_eq!(ref_shape.len(),3,"References shape should be [batch,channels,256]");
+    assert_eq!(ref_shape[1],src_shape[2], "Number of channels does not match");
+    assert_eq!(ref_shape[2],256, "Number of pixel values must be 256");
+    let src_shape = [src_shape[0],src_shape[1],src_shape[2]];
+    let ref_shape = [ref_shape[0],ref_shape[1],ref_shape[2]];
+    let src = unsafe{source.as_slice()?};
+    let rfc = unsafe{references.as_slice()?};
+    let channels = src_shape[2];
+    let hist_src = if let Some(mask) = &source_mask {
+        let mask:&PyArray2<bool> = mask.extract(source.py())?;
+        let msk_shape = mask.shape();
+        assert_eq!(msk_shape,&src_shape[..2],"Mask shape should match source shape");
+        let msk = unsafe{mask.as_slice()?};
+        vf::histogram::histograms(src, channels, |i|msk[i] )
+    }else{
+        vf::histogram::histograms(src, channels,   |_|true)
+    };
+    let hist_norm_src = vf::histogram::normalize_histograms(hist_src.flatten());
+    let batch = ref_shape[0];
+    let channels256 = channels*256;
+    let (best_ref_idx, square_dist) = vf::histogram::find_closest_n(&hist_norm_src,batch,rfc);
+    let ref_offset = best_ref_idx*channels256;
+    let best_ref_hists = &rfc[ref_offset..ref_offset+channels256];
+    fn area_common(a:&[f32],b:&[f32])->f32{
+        a.iter().zip(b.iter()).map(|(&a,&b)|a.min(b)).sum()
+    }
+    let alpha = match blend_policy.as_str(){
+        "PROP_TO_SQUARED" => square_dist/channels as f32,
+        "PROP_TO_DIST" => (square_dist/channels as f32).sqrt(),
+        "PROP_TO_AREA_DIFF" => 1. - area_common(best_ref_hists,&hist_norm_src)/channels as f32,
+        "INV_PROP_TO_SQUARED" => 1. - square_dist/channels as f32,
+        "INV_PROP_TO_DIST" => 1. - (square_dist/channels as f32).sqrt(),
+        "INV_PROP_TO_AREA_DIFF" => area_common(best_ref_hists,&hist_norm_src)/channels as f32,
+        s => f32::from_str(s).map_err(|_|PyValueError::new_err(format!("Unknown policy {}", blend_policy)))?
+    };
+    let blended = vf::histogram::blend(alpha,&hist_norm_src,1.-alpha,best_ref_hists);
+    let out = if let Some(mask) = source_mask {
+        let mask:&PyArray2<bool> = mask.extract(source.py())?;
+        let msk = unsafe{mask.as_slice()?};
+        vf::histogram::match_2precomputed_images(src, &src_shape, hist_src.flatten(), &blended,|i|msk[i] )
+    }else{
+        vf::histogram::match_2precomputed_images(src, &src_shape, hist_src.flatten(),&blended,  |_|true)
+    };
+    let v = PyArray1::from_vec(source.py(),out.into_vec());
+    v.reshape(src_shape).map(|a|(a,best_ref_idx,square_dist,alpha))
+}
+
+
+
+#[pyfunction]
+#[text_signature = "(scalar1, histogram1, scalar2, histogram2)"]
+/// `histogram1` and `histogram2` shape `[channels,256]`
+pub fn blend_histograms<'py>(scalar1:f32, histogram1: &'py PyArray2<f32>, scalar2:f32, histogram2: &'py PyArray2<f32>) -> PyResult<&'py PyArray2<f32>> {
+    let s1 = histogram1.shape();
+    let s2 = histogram2.shape();
+    assert_eq!(s1.len(),2,"Shape should be [channels,256]");
+    assert_eq!(s2.len(),2,"Shape should be [channels,256]");
+    assert_eq!(s1[0],s2[0], "Number of channels does not match");
+    let so = [s1[0],s1[1]];
+    let h1 = unsafe{histogram1.as_slice()?};
+    let h2 = unsafe{histogram2.as_slice()?};
+    let ho:Vec<f32> = vf::histogram::blend(scalar1, h1, scalar2, h2);
+    let v = PyArray1::from_vec(histogram1.py(),ho);
+    v.reshape(so)
+}
+
+
+#[pyfunction]
+#[text_signature = "(n)"]
+pub fn cyclic_group<'py>(py:Python<'py>, n:usize) -> PyResult<&'py PyArray2<usize>> {
+    let (m,l) = vf::cayley::cyclic_group(n);
+    let ll = m.len()/l;
+    PyArray1::from_vec(py,m).reshape([ll,l])
+}
+
+
+#[pyfunction]
+#[text_signature = "(n)"]
+pub fn cyclic_monoid<'py>(py:Python<'py>, n:usize) -> PyResult<&'py PyArray2<usize>> {
+    let (m,l) = vf::cayley::cyclic_monoid(n);
+    let ll = m.len()/l;
+    PyArray1::from_vec(py,m).reshape([ll,l])
+}
+
+
+#[pyfunction]
+#[text_signature = "(a,b)"]
+pub fn direct_product<'py>(a: &'py PyArray2<usize>, b: &'py PyArray2<usize>) -> PyResult<&'py PyArray2<usize>> {
+    let a_shape = a.shape();
+    let b_shape = b.shape();
+    assert_eq!(a_shape.len(),2,"Shape should be [elements, generators]");
+    assert_eq!(b_shape.len(),2,"Shape should be [elements, generators]");
+    let a_s = unsafe{a.as_slice()?};
+    let b_s = unsafe{b.as_slice()?};
+    let (m,g) = vf::cayley::direct_product(a_s,a_shape[1],b_s,b_shape[1]);
+    PyArray1::from_vec(a.py(),m).reshape([a_shape[0]*b_shape[0],g])
+}
+
+#[pyfunction]
+#[text_signature = "(state_space, w)"]
+/// `w` are feedforward weights
+/// returns recurrent weights `u` and new feedforward weights `w`
+pub fn learn_uw<'py>(state_space: &'py PyArray2<usize>, w: &'py PyArray2<f32>) -> PyResult<(&'py PyArray3<f32>,&'py PyArray2<f32>)> {
+    let state_space_shape = state_space.shape();
+    let w_shape = w.shape();
+    let a_len = state_space_shape[1];
+    assert_eq!(state_space_shape.len(),2,"State space shape should be [states, transitions]");
+    assert_eq!(w_shape.len(),2,"W shape should be [states, quotient_monoid_elements]");
+    let sp = unsafe{state_space.as_slice()?};
+    let w_slice = unsafe{w.as_slice()?};
+    let quotient_monoid_elements = w_shape[1];
+    let states = state_space_shape[0];
+    let mut u = Vec::empty(a_len*quotient_monoid_elements*quotient_monoid_elements);
+    vf::cayley::learn_u(sp,a_len,w_slice,quotient_monoid_elements,&mut u);
+    for a in 0..a_len{
+        for g in 0..quotient_monoid_elements{
+            let offset = (a*quotient_monoid_elements+g)*quotient_monoid_elements;
+            let row = &mut u[offset..offset+quotient_monoid_elements];
+            row[g] = 0.;
+            let inv_sum = 1./row.sum();
+            row.mul_scalar_(inv_sum);
+
+        }
+    }
+    let mut new_w = vec![0.;states*quotient_monoid_elements];
+    vf::cayley::learn_w(sp,a_len,w_slice,quotient_monoid_elements,&u,&mut new_w);
+    let u = PyArray1::from_vec(w.py(),u);
+    let new_w = PyArray1::from_vec(w.py(),new_w);
+    let u = u.reshape([a_len,quotient_monoid_elements,quotient_monoid_elements])?;
+    let new_w = new_w.reshape([states,quotient_monoid_elements])?;
+    Ok((u,new_w))
+}
+
+
+
 #[pymodule]
 fn histogram(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
+    m.add_function(wrap_pyfunction!(find_histogram_anomaly, m)?)?;
     m.add_function(wrap_pyfunction!(match_histogram, m)?)?;
     m.add_function(wrap_pyfunction!(match_best_images, m)?)?;
+    m.add_function(wrap_pyfunction!(blend_histograms, m)?)?;
+    m.add_function(wrap_pyfunction!(blend_and_match_best_images, m)?)?;
+    m.add_function(wrap_pyfunction!(normalize_histogram, m)?)?;
+    m.add_function(wrap_pyfunction!(image_histogram, m)?)?;
+    m.add_function(wrap_pyfunction!(match_precomputed_histogram, m)?)?;
+
     Ok(())
 }
 
@@ -649,6 +905,10 @@ fn ecc_py(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(dense_to_sparse, m)?)?;
     m.add_function(wrap_pyfunction!(batch_dense_to_sparse, m)?)?;
     m.add_function(wrap_pyfunction!(rand_set, m)?)?;
+    m.add_function(wrap_pyfunction!(cyclic_group, m)?)?;
+    m.add_function(wrap_pyfunction!(cyclic_monoid, m)?)?;
+    m.add_function(wrap_pyfunction!(direct_product, m)?)?;
+    m.add_function(wrap_pyfunction!(learn_uw, m)?)?;
     Ok(())
 }
 
