@@ -3,5 +3,6 @@
 members = [
     "vf",
     "ecc_py",
-    "main"
+    "main",
+    "cli"
 ]
