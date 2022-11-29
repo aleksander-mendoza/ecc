@@ -17,6 +17,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 vf = {path= "../vf" }
+render = {path= "../render" }
 numpy = "0.13"
 chrono = "0.4.19"
 serde = "1.0.130"

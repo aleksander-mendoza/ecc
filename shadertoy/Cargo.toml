@@ -1,0 +1,12 @@
+[package]
+name = "shadertoy"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+render = {path="../render"}
+nalgebra-glm = "0.17.0"
+winit = "0.27.5"
+vk-shader-macros = "0.2.8"

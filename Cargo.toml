@@ -3,5 +3,8 @@
 members = [
     "vf",
     "ecc_py",
-    "main"
+    "main",
+    "render",
+    "evolutio",
+    "shadertoy"
 ]
