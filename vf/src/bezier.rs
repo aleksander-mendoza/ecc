@@ -12,12 +12,12 @@ pub type Bezier<F: Float, const DIM: usize> = [[F; DIM]];
 pub fn pos<F: NumAssign + Float + Copy + 'static, const DIM: usize>(bezier_curve: &Bezier<F, DIM>, t: F) -> [F; DIM] where usize: AsPrimitive<F> {
     pos_with(|i|bezier_curve[i],bezier_curve.len(),t)
 }
-/**Returns position of point that lies at distance t on the curve (where t is normalized to range between 0 and 1).
+/** Returns position of point that lies at distance t on the curve (where t is normalized to range between 0 and 1).
 It uses Bernstein basis polynomials to efficiently compute the position. See here
 https://en.wikipedia.org/wiki/B%C3%A9zier_curve#General_definition and here
 https://en.wikipedia.org/wiki/De_Casteljau%27s_algorithm
 Returns $\sum_{i=0}^{n-1} \binom{n-1}{i} (1 - t)^{n-1-i} t^i P_i$ where P_i is the point at bezier_curve[i].
- If you can't see the LaTeX equation copy-paste it to https://latex.codecogs.com/eqneditor/editor.php*/
+ If you can't see the LaTeX equation copy-paste it to https://latex.codecogs.com/eqneditor/editor.php */
 pub fn pos_with<F: NumAssign + Float + Copy + 'static, const DIM: usize>(mut bezier_curve: impl FnMut(usize)->[F; DIM], bezier_curve_length:usize, t: F) -> [F; DIM] where usize: AsPrimitive<F> {
     let n = bezier_curve_length;
     /**b_i = (1-t)^{n-1-i}*/

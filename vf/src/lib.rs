@@ -76,7 +76,6 @@ mod quat;
 pub mod histogram;
 mod num;
 mod vec;
-pub mod mat;
 
 pub use vec::*;
 pub use num::*;

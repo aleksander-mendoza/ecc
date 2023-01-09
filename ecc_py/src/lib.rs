@@ -145,6 +145,36 @@ pub fn conv_compose(stride1: PyObject, kernel1: PyObject, stride2: PyObject, ker
     Ok((stride.to_vec(), kernel.to_vec()))
 }
 
+#[pyfunction]
+#[text_signature = "(stride1,kernel1,stride2,kernel2)"]
+pub fn conv_compose_weights<'py>(stride1:[usize;2], weights1: &'py PyArray4<f32>, bias1: &'py PyArray1<f32>,
+                            stride2:[usize;2], weights2: &'py PyArray4<f32>, bias2: &'py PyArray1<f32>) -> PyResult<([usize;2], &'py PyArray4<f32>, &'py PyArray1<f32>)> {
+    if let [self_out_channels, self_in_channels, self_kernel0, self_kernel1] = *weights1.shape() {
+        if let [next_out_channels, next_in_channels, next_kernel0, next_kernel1] = *weights2.shape() {
+            assert_eq!(self_out_channels, next_in_channels, "self_out_channels != next_in_channels");
+            let self_kernel = [self_kernel0, self_kernel1];
+            let self_weights: &[f32] = unsafe { weights1.as_slice()? };
+            let self_bias: &[f32] = unsafe { bias1.as_slice()? };
+            let next_kernel = [next_kernel0, next_kernel1];
+            let next_weights: &[f32] = unsafe { weights2.as_slice()? };
+            let next_bias: &[f32] = unsafe { bias2.as_slice()? };
+            assert_eq!(self_out_channels, self_bias.len(), "self_out_channels != self_bias.len()");
+            assert_eq!(next_out_channels, next_bias.len(), "next_out_channels != next_bias.len()");
+            let py = weights1.py();
+            let (comp_stride, comp_kernel) = conv::compose(&stride1, &self_kernel, &stride2, &next_kernel);
+            let mut comp_weigths = PyArray4::<f32>::new(py, [next_out_channels, self_in_channels, comp_kernel[0], comp_kernel[1]], false);
+            let mut comp_bias = PyArray1::<f32>::new(py, [next_out_channels], false);
+            let w_comp = unsafe { comp_weigths.as_slice_mut()? };
+            w_comp.fill(0.);
+            conv::compose_weights2d(self_in_channels, &stride1, &self_kernel, self_weights, self_bias,
+                                    &next_kernel, next_weights, next_bias,
+                                    &comp_kernel,w_comp , unsafe { comp_bias.as_slice_mut()? });
+            return Ok((comp_stride, comp_weigths, comp_bias))
+        }
+    }
+    unreachable!();
+}
+
 
 #[pyfunction]
 #[text_signature = "(v,s)"]
@@ -890,6 +920,7 @@ fn ecc_py(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(conv_stride, m)?)?;
     m.add_function(wrap_pyfunction!(conv_compose_array, m)?)?;
     m.add_function(wrap_pyfunction!(conv_compose, m)?)?;
+    m.add_function(wrap_pyfunction!(conv_compose_weights, m)?)?;
     m.add_function(wrap_pyfunction!(soft_wta_u, m)?)?;
     m.add_function(wrap_pyfunction!(soft_wta_v, m)?)?;
     m.add_function(wrap_pyfunction!(soft_wta_u_, m)?)?;

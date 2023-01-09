@@ -1,7 +1,7 @@
 use std::fmt::Debug;
 use crate::*;
 use std::ops::{Range, Mul, Add, Sub, Div, Rem};
-use num_traits::{One, Zero};
+use num_traits::{AsPrimitive, One, Zero};
 
 pub fn in_range_begin<T: Mul<Output=T> + Copy, const DIM: usize>(out_position: &[T; DIM], stride: &[T; DIM]) -> [T; DIM] {
     out_position.mul(stride)
@@ -80,13 +80,13 @@ pub fn out_size<T: Debug + Rem<Output=T> + Copy + Div<Output=T> + Add<Output=T> 
     //(input-kernel)/stride+1 == output
 }
 
-pub fn in_size<T: Debug + Copy + Div<Output=T> + Add<Output=T> + Sub<Output=T> + Zero + Ord + One , const DIM: usize>(output: &[T; DIM], stride: &[T; DIM], kernel_size: &[T; DIM]) -> [T; DIM] {
+pub fn in_size<T: Debug + Copy + Div<Output=T> + Add<Output=T> + Sub<Output=T> + Zero + Ord + One, const DIM: usize>(output: &[T; DIM], stride: &[T; DIM], kernel_size: &[T; DIM]) -> [T; DIM] {
     assert!(output.all_gt_scalar(T::zero()), "Output size {:?} contains zero", output);
     output.sub_scalar(T::one())._mul(stride)._add(kernel_size)
     //input == stride*(output-1)+kernel
 }
 
-pub fn stride<T: Debug + Rem<Output=T>+ Copy + Div<Output=T> + Add<Output=T> + Sub<Output=T> + Ord + One + Zero, const DIM: usize>(input: &[T; DIM], out_size: &[T; DIM], kernel_size: &[T; DIM]) -> [T; DIM] {
+pub fn stride<T: Debug + Rem<Output=T> + Copy + Div<Output=T> + Add<Output=T> + Sub<Output=T> + Ord + One + Zero, const DIM: usize>(input: &[T; DIM], out_size: &[T; DIM], kernel_size: &[T; DIM]) -> [T; DIM] {
     assert!(kernel_size.all_le(input), "Kernel size {:?} is larger than the input shape {:?}", kernel_size, input);
     let input_sub_kernel = input.sub(kernel_size);
     let out_size_minus_1 = out_size.sub_scalar(T::one());
@@ -95,7 +95,7 @@ pub fn stride<T: Debug + Rem<Output=T>+ Copy + Div<Output=T> + Add<Output=T> + S
     //(input-kernel)/(output-1) == stride
 }
 
-pub fn compose<T:Copy +  Div<Output=T> + Add<Output=T> + Sub<Output=T> + Ord + One, const DIM: usize>(self_stride: &[T; DIM], self_kernel: &[T; DIM], next_stride: &[T; DIM], next_kernel: &[T; DIM]) -> ([T; DIM], [T; DIM]) {
+pub fn compose<T: Copy + Div<Output=T> + Add<Output=T> + Sub<Output=T> + Ord + One, const DIM: usize>(self_stride: &[T; DIM], self_kernel: &[T; DIM], next_stride: &[T; DIM], next_kernel: &[T; DIM]) -> ([T; DIM], [T; DIM]) {
     //(A-kernelA)/strideA+1 == B
     //(B-kernelB)/strideB+1 == C
     //((A-kernelA)/strideA+1-kernelB)/strideB+1 == C
@@ -107,6 +107,110 @@ pub fn compose<T:Copy +  Div<Output=T> + Add<Output=T> + Sub<Output=T> + Ord + O
     let composed_kernel = next_kernel.sub_scalar(T::one())._mul(self_stride)._add(self_kernel);
     let composed_stride = self_stride.mul(next_stride);
     (composed_stride, composed_kernel)
+}
+
+/**First run `compose` to obtain `comp_stride` and `comp_kernel`. The shapes of tensors are
+ ```
+self_weights.shape==[self_out_channels, self_in_channels, self_kernel[0], self_kernel[1]]
+next_weights.shape==[next_out_channels, next_in_channels, next_kernel[0], next_kernel[1]]
+where
+self_in_channels == comp_in_channels
+self_bias.len() == self_out_channels == next_in_channels
+next_bias.len() == next_out_channels == comp_out_channels
+comp_stride, comp_kernel = compose(self_stride, self_kernel, next_stride, next_kernel)
+```
+and there is precondition
+```
+forall i: comp_weights[i]==0.
+```
+This specification is compatible wit PyTorch
+ */
+pub fn compose_weights2d<T: Copy + Mul<Output=T> + Add<Output=T> + One + AsPrimitive<usize>>(
+    self_in_channels: T,
+    self_stride: &[T; 2], self_kernel: &[T; 2], self_weights: &[f32], self_bias: &[f32],
+    next_kernel: &[T; 2], next_weights: &[f32], next_bias: &[f32],
+    comp_kernel: &[T; 2], comp_weights: &mut [f32], comp_bias: &mut [f32]) {
+    let self_in_channels = self_in_channels.as_();
+    let self_out_channels = self_bias.len();
+    let next_in_channels = self_out_channels;
+    let next_out_channels = next_bias.len();
+    let self_ker_area = self_kernel.product().as_();
+    let next_ker_area = next_kernel.product().as_();
+    let comp_ker_area = comp_kernel.product().as_();
+    assert_eq!(self_in_channels * self_out_channels * self_ker_area, self_weights.len(), "self_in_channels={}, self_out_channels={},self_ker_area={},  LHS convolution weight tensor has wrong size", self_in_channels, self_out_channels, self_ker_area);
+    assert_eq!(next_in_channels * next_out_channels * next_ker_area, next_weights.len(), "next_in_channels={}, next_out_channels={}, next_ker_area={},  RHS convolution weight tensor has wrong size", next_in_channels, next_out_channels, next_ker_area);
+    assert_eq!(self_in_channels * next_out_channels * comp_ker_area, comp_weights.len(), "self_in_channels={}, next_out_channels={}, comp_ker_area={}, composed convolution weight tensor has wrong size", self_in_channels, next_out_channels, comp_ker_area);
+    assert_eq!(next_bias.len(), comp_bias.len(), "composed bias length doesn't match RHS bias length");
+    // This is what happens in 1D case
+    //
+    //                 [w1, w2, w3]  -> y5 = b + w1*x5 + w2*x6 + w3*x7
+    //             [w1, w2, w3]      -> y4 = b + w1*x4 + w2*x5 + w3*x6
+    //         [w1, w2, w3]          -> y3 = b + w1*x3 + w2*x4 + w3*x5
+    //     [w1, w2, w3]              -> y2 = b + w1*x2 + w2*x3 + w3*x4
+    // [w1, w2, w3]                  -> y1 = b + w1*x1 + w2*x2 + w3*x3
+    // [x1, x2, x3, x4, x5, x6, x7]  -> input x convolved with self (w)
+    //
+    //         [W1, W2]  -> z3 = B + W1*y3 + W2*y4
+    //     [W1, W2]      -> z2 = B + W1*y2 + W2*y3
+    // [W1, W2]          -> z1 = B + W1*y1 + W2*y2
+    // [y1, y2, y3, y4]  -> input y convolved with next (W)
+    //
+    // Therefore composition does
+    //  z1 = B + W1*y1 + W2*y2
+    //     = B + W1*(b + w1*x1 + w2*x2 + w3*x3) + W2 * (b + w1*x2 + w2*x3 + w3*x4)
+    //     = B + W1*b + W2*b + W1*w1*x1 + W1*w2*x2 + W1*w3*x3 + W2*w1*x2 + W2*w2*x3 + W2*w3*x4
+    //     = (B + W1*b + W2*b) + W1*w1*x1 + (W1*w2 + W2*w1)*x2 + (W1*w3 + W2*w2)*x3 + W2*w3*x4
+    //     = (B + W1*b + W2*b) + ([W2, W1] convolved with [0, w1, w2, w3, 0]) @ [x1, x2, x3, x4]^T
+    // If there was stride 2 in first convolution then y vector would consist of [y1,y3,y5]
+    //  z1 = B + W1*y1 + W2*y3
+    //     = B + W1*(b + w1*x1 + w2*x2 + w3*x3) + W2*(b + w1*x3 + w2*x4 + w3*x5)
+    //     = B + W1*b + W2*b + W1*w1*x1 + W1*w2*x2 + W1*w3*x3 + W2*w1*x3 + W2*w2*x4 + W2*w3*x5
+    //     = B + W1*b + W2*b + W1*w1*x1 + W1*w2*x2 + (W1*w3 + W2*w1)*x3 + W2*w2*x4 + W2*w3*x5
+    //     = (B + W1*b + W2*b) + ([W2, 0, W1] convolved with [0, 0, w1, w2, w3, 0,  0]) @ [x1, x2, x3, x4, x5]^T
+    // The stride of second convolution has no impact on computation of individual z's. It only changes
+    // which of the z's are evaluated. But composition of two convolutional layers is achieved by finding
+    // the formula for a single z given the vector of x.
+
+    /*next_bias is like uppercase B */
+    comp_bias.copy_from_slice(next_bias);
+    for next_out_channel in 0..next_out_channels {
+        // We need to compute z1 (it could be any z but indexing makes sense when you take z1.
+        // The other z's are just translations whose indexing is shifted accordingly).
+        // We will need to sum over all channels in the hidden layer.
+        for next_in_channel in 0..next_in_channels {
+            let self_out_channel = next_in_channel; // just for better readability
+            let w_next_offset = (next_out_channel * next_in_channels + next_in_channel) * next_ker_area;
+            /*(next_x,next_y) is like the index of uppercase W*/
+            for next_x in 0..next_kernel[0].as_() {
+                for next_y in 0..next_kernel[1].as_() {
+                    /*w_next is like uppercase W */
+                    let w_next = next_weights[w_next_offset + next_x * next_kernel[1].as_() + next_y];
+                    /*b_self is like lowercase b */
+                    let b_self = self_bias[self_out_channel];
+                    comp_bias[next_out_channel] += b_self * w_next;
+                    /*(hidden_x,hidden_y) is like the index of y*/
+                    let hidden_x = next_x * self_stride[0].as_();
+                    let hidden_y = next_y * self_stride[1].as_();
+                    /*(self_x,self_y) is like the index of lowercase w*/
+                    for self_in_channel in 0..self_in_channels {
+                        let w_comp_offset = (next_out_channel * self_in_channels + self_in_channel) * comp_ker_area;
+                        let w_self_offset = (self_out_channel * self_in_channels + self_in_channel) * self_ker_area;
+                        for self_x in 0..self_kernel[0].as_() {
+                            for self_y in 0..self_kernel[1].as_() {
+                                /* w_self is like lowercase w */
+                                let w_self = self_weights[w_self_offset + self_x * self_kernel[1].as_() + self_y];
+                                let w_comp = w_self * w_next;
+                                /* (comp_x,comp_y) is like the index of x*/
+                                let comp_x = hidden_x + self_x;
+                                let comp_y = hidden_y + self_y;
+                                comp_weights[w_comp_offset + comp_x * comp_kernel[1].as_() + comp_y] += w_comp;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 // pub fn conv(&[])
