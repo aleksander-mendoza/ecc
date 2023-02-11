@@ -1,0 +1,1088 @@
+#ifndef CONSTANTS_COMP
+#define CONSTANTS_COMP
+
+//////////////////////////////////////////////////////////////////////////////
+/////////////// BELOW SECTION CONTAINS ALL SPECIALISATION CONSTANTS
+//////////////////////////////////////////////////////////////////////////////
+
+#define Face uvec2
+
+#define XPlus 0
+#define XMinus 1
+#define YPlus 2
+#define YMinus 3
+#define ZPlus 4
+#define ZMinus 5
+const uint CHUNK_WIDTH = 16;
+const uint CHUNK_DEPTH = 16;
+const uint CHUNK_HEIGHT = 256;
+const float PI = 3.1415926535897932384626433832795;
+const float SQRT_2 = sqrt(2);
+const uint MAX_UINT = 4294967295;
+const uvec3 MAX_UVEC3 = uvec3(MAX_UINT,MAX_UINT,MAX_UINT);
+const uvec2 MAX_UVEC2 = uvec2(MAX_UINT,MAX_UINT);
+#define GROUP_SIZE_CONST_ID 1
+layout (constant_id = 1) const uint GROUP_SIZE = 32;
+layout (constant_id = 2) const uint CHUNKS_X = 0;
+layout (constant_id = 3) const uint CHUNKS_Z = 0;
+layout (constant_id = 4) const uint FACES_TO_BE_INSERTED_CHUNK_CAPACITY = 128;
+layout (constant_id = 5) const uint FACES_TO_BE_REMOVED_CHUNK_CAPACITY = 128;
+layout (constant_id = 6) const uint BROAD_PHASE_CELL_SIZE = 2; // how many blocks make up the side of one cell. Each cell may then hold multiple bones
+const uint BROAD_PHASE_CELL_CAPACITY = 8; // maximum number of bones that can be placed in one cell
+const uint WORLD_WIDTH = CHUNKS_X*CHUNK_WIDTH;
+const uint WORLD_DEPTH = CHUNKS_Z*CHUNK_DEPTH;
+const uint WORLD_AREA = WORLD_WIDTH*WORLD_DEPTH;
+const uint TOTAL_CHUNKS = CHUNKS_X*CHUNKS_Z;
+const uint WORLD_VOLUME = WORLD_AREA*CHUNK_HEIGHT;
+const uint BROAD_PHASE_CHUNK_WIDTH_IN_CELLS = CHUNK_WIDTH/BROAD_PHASE_CELL_SIZE;
+const uint BROAD_PHASE_CHUNK_DEPTH_IN_CELLS = CHUNK_DEPTH/BROAD_PHASE_CELL_SIZE;
+const uint BROAD_PHASE_CHUNK_HEIGHT_IN_CELLS = CHUNK_HEIGHT/BROAD_PHASE_CELL_SIZE;
+const uint BROAD_PHASE_CHUNK_VOLUME_IN_CELLS = BROAD_PHASE_CHUNK_WIDTH_IN_CELLS*BROAD_PHASE_CHUNK_DEPTH_IN_CELLS*BROAD_PHASE_CHUNK_HEIGHT_IN_CELLS;
+const uint BROAD_PHASE_WORLD_VOLUME_IN_CELLS = BROAD_PHASE_CHUNK_VOLUME_IN_CELLS*TOTAL_CHUNKS;
+const uvec3 WORLD_BORDERS = uvec3(WORLD_WIDTH,CHUNK_HEIGHT,WORLD_DEPTH);
+layout (constant_id = 100) const float BLOCK_COLLISION_FRICTION = 0.7;
+layout (constant_id = 101) const float BLOCK_COLLISION_MINIMUM_BOUNCE = 0.01;
+layout (constant_id = 102) const float PHYSICS_SIMULATION_DELTA_TIME_PER_STEP = 1.;
+layout (constant_id = 103) const float BONE_COLLISION_FORCE_PER_AREA_UNIT = 0.01;
+layout (constant_id = 104) const float IMPULSE_AVERAGING_OVER_TIMESETP = 0.2;
+layout (constant_id = 105) const float GRAVITY = 0;
+layout (constant_id = 106) const float DAMPING_COEFFICIENT = 0.99;
+layout (constant_id = 107) const float BLOCK_RIGIDITY = 0.9;
+
+layout (constant_id = 300) const uint MAX_BONES = 128;
+layout (constant_id = 301) const uint MAX_SENSORS = 128;
+layout (constant_id = 302) const uint MAX_FACES = 128;
+layout (constant_id = 303) const uint MAX_RAND_UINT = 128;
+//layout (constant_id = 304) const uint MAX_NEURAL_NET_LAYERS = 128;
+layout (constant_id = 305) const uint MAX_TMP_FACES_COPY = 128;
+//layout (constant_id = 306) const uint MAX_WORLD_BLOCKS_TO_UPDATE = 128;
+layout (constant_id = 307) const uint MAX_BLOCKS_TO_BE_INSERTED_OR_REMOVED = 128;
+layout (constant_id = 308) const uint MAX_FACES_TO_BE_INSERTED = 128 ;
+layout (constant_id = 309) const uint MAX_FACES_TO_BE_REMOVED = 128 ;
+layout (constant_id = 310) const uint MAX_HTM_ENTITIES = 128;
+layout (constant_id = 311) const uint MAX_ANN_ENTITIES = 128;
+layout (constant_id = 312) const uint MAX_PARTICLES = 1024;
+
+layout (constant_id = 400) const uint SEA_LEVEL = 128;
+layout (constant_id = 401) const float FREEZING_TEMPERATURE = 0.;
+layout (constant_id = 402) const float SWAMP_HUMIDITY = 40.;
+layout (constant_id = 403) const float DESERT_HUMIDITY = 25.;//humidity of sahara desert
+layout (constant_id = 404) const float LARGE_SCALE = 64.;
+layout (constant_id = 405) const float CHUNK_SCALE = 16.;
+layout (constant_id = 406) const float TEMPERATURE_SCALE = 64.;
+layout (constant_id = 407) const float HUMIDITY_SCALE = 64.;
+layout (constant_id = 408) const float RESOURCE_TYPE_SCALE = 16.;
+layout (constant_id = 409) const float HAS_RESOURCE_SCALE = 4.;
+layout (constant_id = 410) const uint RAND_SEED = 1;
+
+bool is_in_world_borders(uvec3 pos){
+    return all(lessThan(pos,WORLD_BORDERS));
+}
+
+
+
+//////////////////////////////////////////////////////////////////////////////
+/////////////// BELOW SECTION CONTAINS BONE DEFINITIONS AND UTILITIES
+//////////////////////////////////////////////////////////////////////////////
+
+struct Bone{
+    vec3 new_center;
+    uint texture_for_block_id;
+    vec3 impulse;
+    float mass;
+    vec3 old_center;
+    uint entity_idx;
+    vec3 position_relative_to_parent;
+    uint parent_bone_idx;
+    float half_side_length;//width == 2*half_side_length && depth == 2*half_side_length
+    float half_height;
+    vec2 yaw_and_pitch; // yaw = how high (up/down) is the entity looking
+    //  pitch = which direction (left/right) is the entity looking
+};
+
+const uint ENTITY_TYPE_ANN = 0;
+const uint ENTITY_TYPE_HTM = 1;
+vec3 get_bone_half_size(float half_side_length,float half_height){
+    return vec3(half_side_length,half_height,half_side_length);
+}
+vec3 get_bone_size(float half_side_length,float half_height){
+    return get_bone_half_size(half_side_length, half_height)*2;
+}
+uint encode_ann_entity_idx(uint ann_entity_idx){
+    return ann_entity_idx*2+ENTITY_TYPE_ANN;
+}
+uint encode_htm_entity_idx(uint ann_entity_idx){
+    return ann_entity_idx*2+ENTITY_TYPE_HTM;
+}
+uint decode_entity_idx(uint encoded_entity_idx){
+    return encoded_entity_idx/2;
+}
+uint decode_entity_type(uint encoded_entity_idx){
+    return encoded_entity_idx&1u;
+}
+
+bool is_ray_intersecting_axis_aligned_box(vec3 start, vec3 distance_and_direction, const vec3 left_bottom_front_corner, const vec3 box_size) {
+    const mat3x2 start_mat = mat3x2(start.yz,start.xz,start.xy);
+    const vec3 right_top_back_corner = left_bottom_front_corner + box_size;
+    const vec3 ratioLBF = (left_bottom_front_corner - start)/distance_and_direction;
+    const vec3 ratioRTB = (right_top_back_corner - start)/distance_and_direction;
+    const mat3x2 intersection_point_LBF_box_plane = start_mat + mat3x2(distance_and_direction.yz*ratioLBF.x,distance_and_direction.xz*ratioLBF.y,distance_and_direction.xy*ratioLBF.z);
+    const mat3x2 intersection_point_RTB_box_plane = start_mat + mat3x2(distance_and_direction.yz*ratioRTB.x,distance_and_direction.xz*ratioRTB.y,distance_and_direction.xy*ratioRTB.z);
+    return
+        (all(lessThan(left_bottom_front_corner.yz, intersection_point_LBF_box_plane[0])) && all(greaterThan(intersection_point_LBF_box_plane[0], right_top_back_corner.yz)) ) ||
+        (all(lessThan(left_bottom_front_corner.xz, intersection_point_LBF_box_plane[1])) && all(greaterThan(intersection_point_LBF_box_plane[1], right_top_back_corner.xz)) ) ||
+        (all(lessThan(left_bottom_front_corner.xy, intersection_point_LBF_box_plane[2])) && all(greaterThan(intersection_point_LBF_box_plane[2], right_top_back_corner.xy)) ) ||
+        (all(lessThan(left_bottom_front_corner.yz, intersection_point_RTB_box_plane[0])) && all(greaterThan(intersection_point_RTB_box_plane[0], right_top_back_corner.yz)) ) ||
+        (all(lessThan(left_bottom_front_corner.xz, intersection_point_RTB_box_plane[1])) && all(greaterThan(intersection_point_RTB_box_plane[1], right_top_back_corner.xz)) ) ||
+        (all(lessThan(left_bottom_front_corner.xy, intersection_point_RTB_box_plane[2])) && all(greaterThan(intersection_point_RTB_box_plane[2], right_top_back_corner.xy)) )
+    ;
+}
+
+bool is_ray_intersecting_bone(vec3 start, vec3 distance_and_direction, const Bone bone) {
+    const vec3 half_size = vec3(bone.half_side_length,bone.half_height,bone.half_side_length);
+    return is_ray_intersecting_axis_aligned_box(start,distance_and_direction,bone.new_center - half_size, 2*half_size);
+}
+
+
+//////////////////////////////////////////////////////////////////////////////
+/////////////// BELOW SECTION CONTAINS DEFINITIONS THAT ARE TOO SHORT AND SIMPLE TO HAVE THEIR OWN SECTIONS
+//////////////////////////////////////////////////////////////////////////////
+
+const uint PLAYER_EVENT_NOTHING = 0;
+const uint PLAYER_EVENT_THROW = 1;
+const uint PLAYER_EVENT_SET_BLOCK = 2;
+
+struct PlayerEvent{
+    vec3 vec3_slot0;
+    uint u32_slot0;
+    vec3 vec3_slot1;
+    uint u32_slot1;
+    uvec3 uvec3_slot0;
+    uint event_type;
+};
+
+struct CollisionCell{
+    uint len;
+    uint contents[BROAD_PHASE_CELL_CAPACITY];
+};
+
+
+struct GlobalMutables{
+    int blocks_to_be_inserted_or_removed;
+    uint bones;
+    uint lidars;
+    int held_bone_idx; // player can grab a bone and pull it somewhere
+    int tick;
+    uint htm_entities;
+    uint ann_entities;
+    uint particles;
+};
+
+struct FaceRelocation{
+    uint dst_offset;
+    Face face;
+};
+
+struct Particle{
+    vec3 position;
+    uint emitter_entity;
+    vec3 velocity;
+    float energy;
+};
+
+
+////////////////////////////////////////////////////////////////////////////////////
+///////////// BELOW ARE GENERIC UTILITY FUNCTIONS FOR CONVERTING WORLD/FACE POSITIONS TO BUFFER INDICES ETC
+////////////////////////////////////////////////////////////////////////////////////
+
+const uvec3 WORLD_BLOCK_STRIDE = uvec3(1,WORLD_AREA,WORLD_WIDTH);
+uint chunk_pos_into_chunk_idx(uint x, uint z) {
+    return z * CHUNKS_X + x;
+}
+uint block_pos_into_chunk_idx(uint x,uint z){
+    return chunk_pos_into_chunk_idx(x / CHUNK_WIDTH, z / CHUNK_DEPTH);
+}
+uint block_pos_into_world_idx(uvec3 pos){
+    uvec3 s = WORLD_BLOCK_STRIDE*pos;
+    return s.x+s.y+s.z;
+}
+uint block_idx_x_plus_1(uint block_idx){
+    return block_idx + WORLD_BLOCK_STRIDE.x; //pos.z * WORLD_WIDTH + pos.x + pos.y * WORLD_AREA;
+}
+uint block_idx_x_minus_1(uint block_idx){
+    return block_idx - WORLD_BLOCK_STRIDE.x; //pos.z * WORLD_WIDTH + pos.x + pos.y * WORLD_AREA;
+}
+uint block_idx_y_plus_1(uint block_idx){
+    return block_idx + WORLD_BLOCK_STRIDE.y; //pos.z * WORLD_WIDTH + pos.x + pos.y * WORLD_AREA;
+}
+uint block_idx_y_minus_1(uint block_idx){
+    return block_idx - WORLD_BLOCK_STRIDE.y; //pos.z * WORLD_WIDTH + pos.x + pos.y * WORLD_AREA;
+}
+uint block_idx_z_plus_1(uint block_idx){
+    return block_idx + WORLD_BLOCK_STRIDE.z; //pos.z * WORLD_WIDTH + pos.x + pos.y * WORLD_AREA;
+}
+uint block_idx_z_minus_1(uint block_idx){
+    return block_idx - WORLD_BLOCK_STRIDE.z;// pos.z * WORLD_WIDTH + pos.x + pos.y * WORLD_AREA;
+}
+uvec3 world_idx_into_block_pos(uint idx){
+    uint y = idx / WORLD_AREA;
+    uint y_rem = idx - y*WORLD_AREA;
+    uint z = y_rem / WORLD_WIDTH;
+    uint x = y_rem - z * WORLD_WIDTH;
+    return uvec3(x,y,z);
+}
+
+uint world_xz_pos_into_2d_idx(uvec2 pos){
+    return pos.y*WORLD_WIDTH + pos.x;
+}
+uvec2 world_2d_idx_into_xz_pos(uint idx){
+    uint z = idx / WORLD_WIDTH;
+    uint x = idx - z * WORLD_WIDTH;
+    return uvec2(x,z);
+}
+
+
+uint block_pos_relative_to_chunk_into_block_idx_relative_to_chunk(uvec3 position_relative_to_chunk) {
+    //Notice that this conversion could equivalently be expressed as
+    // position_relative_to_chunk.x + position_relative_to_chunk.z << 4 + position_relative_to_chunk.y << 8
+    return position_relative_to_chunk.x+(position_relative_to_chunk.y*CHUNK_DEPTH+position_relative_to_chunk.z)*CHUNK_WIDTH;
+}
+
+uvec3 broad_phase_position_to_cell_pos(vec3 position){
+    return uvec3(position/(BROAD_PHASE_CELL_SIZE));
+}
+uint broad_phase_cell_pos_to_cell_idx(uvec3 cell_position){
+    return cell_position.x+(cell_position.y+cell_position.z*BROAD_PHASE_CHUNK_HEIGHT_IN_CELLS)*CHUNKS_X*BROAD_PHASE_CHUNK_WIDTH_IN_CELLS;
+}
+uint broad_phase_position_to_cell_idx(vec3 position){
+    return broad_phase_cell_pos_to_cell_idx(broad_phase_position_to_cell_pos(position));
+}
+
+uint opposite_orientation(uint orientation) {
+    return orientation + (bool(orientation & 1u) ? -1:+1);
+}
+uint orientation_for_dim_and_dir(uint dimension, bool minus_direction) {
+    return dimension*2+uint(minus_direction);
+}
+uint block_pos_relative_to_chunk_and_orientation_into_face_coords(uvec4 position_relative_to_chunk_and_orientation) {
+    return ((
+    position_relative_to_chunk_and_orientation.w*256+
+    position_relative_to_chunk_and_orientation.z)*256+
+    position_relative_to_chunk_and_orientation.y)*256+
+    position_relative_to_chunk_and_orientation.x;
+}
+
+uvec4 face_coords_into_block_pos_relative_to_chunk_and_orientation(uint face_coords) {
+    uint x = face_coords & 255u;
+    uint y = face_coords/256 & 255u;
+    uint z = face_coords/(256*256) & 255u;
+    uint w = face_coords/(256*256*256) & 255u;
+    return uvec4(x,y,z,w);
+}
+
+bool face_coords_have_the_same_pos(uint face_coords1, uint face_coords2) {
+    return (face_coords1 | 0xFF000000u) == (face_coords2 | 0xFF000000u);
+}
+
+uint pack_chunk_pos_and_tex_id(uint chunk_x, uint chunk_z, uint texture_id) {
+    return texture_id*256*256+(chunk_x + chunk_z*256);
+}
+
+uvec2 new_face(uvec3 block_position_relative_to_chunk, uint orientation, uint chunk_x, uint chunk_z, uint texture_id){
+    uint face_coords = block_pos_relative_to_chunk_and_orientation_into_face_coords(uvec4(block_position_relative_to_chunk,orientation));
+    uint tex_id = pack_chunk_pos_and_tex_id(chunk_x, chunk_z, texture_id);
+    return uvec2(face_coords,tex_id);
+}
+
+///////////////////////////////////////////////////////////////////////////////////
+///////////// BELOW ARE DEFINITIONS OF ALL AVAILABLE INDIRECT DISPATCH BUFFERS
+///////////////////////////////////////////////////////////////////////////////////
+
+const uint DISPATCH_INDIRECT_UPDATE_PARTICLES = 0;
+const uint DISPATCH_INDIRECT_PER_PARTICLE = 0;
+const uint DISPATCH_INDIRECT_BROAD_PHASE_COLLISION_DETECTION = 1;
+const uint DISPATCH_INDIRECT_BROAD_PHASE_COLLISION_DETECTION_CLEANUP = 1;
+const uint DISPATCH_INDIRECT_UPDATE_BONES = 1;
+const uint DISPATCH_INDIRECT_PER_BONE = 1;
+const uint DISPATCH_INDIRECT_AGENT_SENSORY_INPUT_UPDATE = 2;
+const uint DISPATCH_INDIRECT_UPDATE_AMBIENCE = 3;
+const uint DISPATCH_INDIRECT_UPDATE_AMBIENCE_FACES = 4;
+const uint DISPATCH_INDIRECT_UPDATE_AMBIENCE_FLUSH_WORLD_COPY = 4;
+const uint DISPATCH_INDIRECT_PER_BLOCKS_TO_BE_INSERTED_OR_REMOVED = 4;
+const uint DISPATCH_INDIRECT_PER_HTM_ENTITIES = 5;
+const uint DISPATCH_INDIRECT_PER_ANN_ENTITIES = 6;
+const uint DISPATCH_INDIRECT_LEN = 7;
+const uint DRAW_INDIRECT_BONES = 0;
+const uint DRAW_INDIRECT_FACES = 1;
+const uint DRAW_INDIRECT_PARTICLES = 2;
+const uint DRAW_INDIRECT_LEN = 3;
+
+const uint GROUP_SIZE_MINUS_ONE = GROUP_SIZE-1;
+uint invokation_count_to_group_count(uint invokations){
+    return (invokations+GROUP_SIZE_MINUS_ONE)/GROUP_SIZE;
+}
+struct DispatchIndirectCommand{
+    uint    x;
+    uint    y;
+    uint    z;
+};
+struct DrawIndirectCommand{
+    uint vertex_count;
+    uint instance_count;
+    uint first_vertex;
+    uint first_instance;
+};
+
+
+//////////////////////////////////////////////////////////////////////////////////
+/////////// BELOW ARE SOME GENERIC MATH FUNCTIONS
+//////////////////////////////////////////////////////////////////////////////////
+
+/* x must be non-zero */
+uint xorshift32(uint x){
+    /* Algorithm "xor" from p. 4 of Marsaglia, "Xorshift RNGs" */
+    x ^= x << 13;
+    x ^= x >> 17;
+    x ^= x << 5;
+    return x;
+}
+
+float rand_uint_to_random_float(uint rand){
+    return float(MAX_UINT - rand) / float(MAX_UINT);
+}
+
+vec2 rand_uvec2_to_random_vec2(uvec2 rand){
+    return vec2(MAX_UVEC2 - rand) / vec2(MAX_UVEC2);
+}
+vec3 rand_uvec3_to_random_vec3(uvec3 rand){
+    return vec3(MAX_UVEC3 - rand) / vec3(MAX_UVEC3);
+}
+uint max_vec3_component(vec3 v){
+    return v.x > v.y ? (v.x > v.z ? 0 : 2) : (v.y > v.z ? 1 : 2);
+}
+uint min_vec3_component(vec3 v){
+    return v.x < v.y ? (v.x < v.z ? 0 : 2) : (v.y < v.z ? 1 : 2);
+}
+
+vec4 quat_conj(vec4 q)
+{
+    return vec4(-q.x, -q.y, -q.z, q.w);
+}
+
+vec4 quat_mult(vec4 q1, vec4 q2)
+{
+    vec4 qr;
+    qr.x = (q1.w * q2.x) + (q1.x * q2.w) + (q1.y * q2.z) - (q1.z * q2.y);
+    qr.y = (q1.w * q2.y) - (q1.x * q2.z) + (q1.y * q2.w) + (q1.z * q2.x);
+    qr.z = (q1.w * q2.z) + (q1.x * q2.y) - (q1.y * q2.x) + (q1.z * q2.w);
+    qr.w = (q1.w * q2.w) - (q1.x * q2.x) - (q1.y * q2.y) - (q1.z * q2.z);
+    return qr;
+}
+
+vec3 quat_rotate_vec(vec4 q, vec3 v){
+    return quat_mult(q,quat_mult(vec4(v,0.),quat_conj(q))).xyz;
+}
+mat2 normal_vec2_to_rotation_matrix(vec2 direction){
+    vec2 new_z_axis = direction;
+    vec2 new_x_axis = vec2(direction.y,-direction.x);
+    return mat2(new_x_axis,new_z_axis);
+}
+/**When you move your mouse you can rotate only in two euler angles - yaw and pitch - but you cannot rotate roll angle.
+This function works analogically. The input is the direction in which you are looking. The output is a 3D rotation matrix
+that first applies rotation around x axis (like moving your head left and right) and then around y axis (like moving your had up and down);
+*/
+mat3 normal_vec3_to_rotation_matrix(vec3 direction){
+    const vec3 new_x_axis = vec3(direction.z,0,-direction.x);
+    const vec3 new_y_axis = cross(direction,new_x_axis);
+    return mat3(new_x_axis,new_y_axis,direction);
+}
+/**rotates around y axis in the right-hand direction (position your thumb upwards, then your fingers will point in the rotation direction)*/
+mat3 rotation_mat3_from_yaw(float yaw){
+    const float s = sin(yaw);
+    const float c = cos(yaw);
+    return mat3(c,0,s,0,1,0,-s,0,c);
+}
+/**rotates around z axis in the left-hand direction (position your thumb forwards, then your fingers will point in the rotation direction)*/
+mat3 rotation_mat3_from_pitch(float pitch){
+    const float s = sin(pitch);
+    const float c = cos(pitch);
+    return mat3(c,s,0,-s,c,0,0,0,1);
+}
+mat3 rotation_mat_from_yaw_and_pitch(vec2 yaw_and_pitch){
+    const vec2 Ss = sin(yaw_and_pitch); // let S denote sin(yaw) and s denote sin(pitch)
+    const vec2 Cc = cos(yaw_and_pitch); // let C denote cos(yaw) and c denote cos(pitch)
+    const vec4 Cs_cC_Sc_sS = vec4(Cc,Ss) * vec4(Ss.y,Cc,Ss.x);
+    // https://www.wolframalpha.com/input/?i=%7B%7BC%2C0%2CS%7D%2C%7B0%2C1%2C0%7D%2C%7B-S%2C0%2CC%7D%7D++*+%7B%7Bc%2Cs%2C0%7D%2C%7B-s%2Cc%2C0%7D%2C%7B0%2C0%2C1%7D%7D+
+    return mat3(Cs_cC_Sc_sS.y,-Ss.y,-Cs_cC_Sc_sS.z,Cs_cC_Sc_sS.x,Cc.y,-Cs_cC_Sc_sS.w,Ss.x,0,Cc.x);
+}
+/**when yaw and pitch is 0 radians, then direction is vec3(1,0,0)*/
+vec3 direction_from_yaw_and_pitch(vec2 yaw_and_pitch){
+    const vec2 c = cos(yaw_and_pitch);
+    const vec2 s = sin(yaw_and_pitch);
+    // unit_direction_on_xz_plane = vec2(cos(yaw),sin(yaw))
+    // length(final_3d_direction.xz) == cos(pitch)
+    // final_3d_direction.y == sin(pitch)
+    // Therefore:
+    // final_3d_direction.xz ==  unit_direction_on_xz_plane*cos(pitch)
+    const vec2 final_direction_on_xz_plane = vec2(c.x,s.x) * c.y;
+    return vec3(final_direction_on_xz_plane.x,s.y,final_direction_on_xz_plane.y);
+}
+
+float smoothstep(float x) {
+    return x * x * (3. - 2. * x);
+}
+float smoothstep_between(float x, float edge0,float edge1){
+    return edge0 + smoothstep(x)*(edge1-edge0);
+}
+float smoothstep_on_2d_plane(float x, float z, float right_top, float right_bottom,float left_top, float left_bottom){
+    const float val_left = smoothstep_between(z, left_bottom, left_top);
+    const float val_right = smoothstep_between(z, right_bottom, right_top);
+    return smoothstep_between(x, val_left, val_right);
+}
+
+////////////////////////////////////////////////////////////////////////////////
+///////// BELOW ARE DEFINITIONS OF BLOCKS AND BLOCK KPROPERTIES
+////////////////////////////////////////////////////////////////////////////////
+
+struct BlockProp{
+    uint[6] texture_ids;
+    float opacity; // the higher, the more opaque
+    float mass;
+};
+
+struct Block{
+    uint block_id;
+    uint block_id_copy;
+    uint humidity;
+    uint temperature;
+    uint new_humidity;
+    uint new_temperature;
+};
+
+const uint BLOCK_ID_AIR = 0;
+const uint BLOCK_ID_WATER = 1;
+const uint BLOCK_ID_LAVA = 2;
+// blocks above are traversable. Blocks below are solid (Notice
+// that if a block is traversable, player's camera might get inside it.
+// When that happens the block's faces will be culled. This means that every
+// traversable block must be transparent to prevent a situation where
+// the player could see through walls)
+const uint BLOCK_ID_GLASS = 3;
+const uint BLOCK_ID_ICE = 4;
+const uint BLOCK_ID_SWAMP_LEAVES = 5;
+const uint BLOCK_ID_GOLDEN_LEAVES = 6;
+const uint BLOCK_ID_OAK_LEAVES = 7;
+const uint BLOCK_ID_PEACH_LEAVES = 8;
+const uint BLOCK_ID_AETHER_LEAVES = 9;
+const uint BLOCK_ID_FROST_LEAVES = 10;
+// blocks above are transparent. Blocks below are not
+const uint BLOCK_ID_STONE = 11;
+const uint BLOCK_ID_GOLD_ORE = 12;
+const uint BLOCK_ID_IRON_ORE = 13;
+const uint BLOCK_ID_COAL_ORE = 14;
+const uint BLOCK_ID_DIAMOND_ORE = 15;
+const uint BLOCK_ID_REDSTONE_ORE = 16;
+const uint BLOCK_ID_DIRT = 17;
+const uint BLOCK_ID_SWAMP_DIRT = 18;
+const uint BLOCK_ID_IRON_RICH_DIRT = 19;
+const uint BLOCK_ID_AETHER_DIRT = 20;
+const uint BLOCK_ID_FROST_DIRT = 21;
+const uint BLOCK_ID_GRASS = 22;
+const uint BLOCK_ID_BERRIES = 23;
+const uint BLOCK_ID_STRAWBERRIES = 24;
+const uint BLOCK_ID_WHEAT = 25;
+const uint BLOCK_ID_SWAMP_GRASS = 26;
+const uint BLOCK_ID_SWAMP_BERRIES = 27;
+const uint BLOCK_ID_SWAMP_BACKBERRIES = 28;
+const uint BLOCK_ID_FROST_GRASS = 29;
+const uint BLOCK_ID_SNOW_CROCUS = 30;
+const uint BLOCK_ID_SNOW_BLACKBERRIES = 31;
+const uint BLOCK_ID_PLANK = 32;
+const uint BLOCK_ID_SLAB = 33;
+const uint BLOCK_ID_BRICK = 34;
+const uint BLOCK_ID_COBBLESTONE = 35;
+const uint BLOCK_ID_BEDROCK = 36;
+const uint BLOCK_ID_SAND = 37;
+const uint BLOCK_ID_RARE_SAND = 38;
+const uint BLOCK_ID_GRAVEL = 39;
+const uint BLOCK_ID_WET_GRAVEL = 40;
+const uint BLOCK_ID_OAK_WOOD = 41;
+const uint BLOCK_ID_OAK_STEM = 42;
+const uint BLOCK_ID_PINK_WOOD = 43;
+const uint BLOCK_ID_PINK_STEM = 44;
+const uint BLOCK_ID_DARK_WOOD = 45;
+const uint BLOCK_ID_DARK_STEM = 46;
+const uint BLOCK_ID_OBSIDIAN = 47;
+const uint BLOCK_ID_SPONGE = 48;
+const uint BLOCK_ID_SNOW = 49;
+const uint BLOCK_ID_POROUS_ROCK = 50;
+const uint BLOCK_ID_HIGHLY_POROUS_ROCK = 51;
+const uint BLOCK_ID_LIMESTONE = 52;
+const uint BLOCKS_LEN = 53;
+const uint NO_OF_TRAVERSABLE_BLOCKS = 3; // every traversable block (mobs can pass through it without colliding) is transparent but the opposite may not necessarily hold
+const uint NO_OF_TRANSPARENT_BLOCKS = 11; // The blocks are aligned in such a way that transparent blocks come first. Hence in
+// order to check whether a block is transparent or not, it's enough to just check if its ID is below this value
+
+#define new_block_tex_ids_regular(texture_id) uint[6](texture_id,texture_id,texture_id,texture_id,texture_id,texture_id)
+#define new_block_tex_ids_top_sides_bottom( texture_id_top, texture_id_side, texture_id_bottom) uint[6](texture_id_side,texture_id_side,texture_id_top,texture_id_bottom,texture_id_side,texture_id_side)
+#define new_block_tex_ids_top_sides_bottom_front( texture_id_top, texture_id_side, texture_id_bottom, texture_id_front) uint[6](texture_id_side,texture_id_side,texture_id_top,texture_id_bottom,texture_id_side,texture_id_front)
+
+const uint[BLOCKS_LEN][6] BLOCK_TEXTURE_IDS = uint[BLOCKS_LEN][6](
+    new_block_tex_ids_regular( /*Some dummy value*/256), // air
+    new_block_tex_ids_regular( 44), // water
+    new_block_tex_ids_regular( 45), // lava
+    new_block_tex_ids_regular( 54), // glass
+    new_block_tex_ids_regular( 46), // ice
+    new_block_tex_ids_regular( 47), // swamp_leaves
+    new_block_tex_ids_regular( 48), // golden_leaves
+    new_block_tex_ids_regular( 49), // oak_leaves
+    new_block_tex_ids_regular( 50), // peach_leaves
+    new_block_tex_ids_regular( 51), // aether_leaves
+    new_block_tex_ids_regular( 52), // frost_leaves
+    new_block_tex_ids_regular( 18), // stone
+    new_block_tex_ids_regular( 19), // gold_ore
+    new_block_tex_ids_regular( 20), // iron_ore
+    new_block_tex_ids_regular( 21), // coal_ore
+    new_block_tex_ids_regular( 22), // diamond_ore
+    new_block_tex_ids_regular( 23), // redstone_ore
+    new_block_tex_ids_regular( 5), // dirt
+    new_block_tex_ids_regular( 10), // swamp_dirt
+    new_block_tex_ids_regular( 11), // iron_rich_dirt
+    new_block_tex_ids_regular( 12), // aether_dirt
+    new_block_tex_ids_regular( 17), // frost_dirt
+    new_block_tex_ids_top_sides_bottom( 3, 4,5), // grass
+    new_block_tex_ids_top_sides_bottom( 0, 4,5), // berries
+    new_block_tex_ids_top_sides_bottom( 1, 4,5), // strawberries
+    new_block_tex_ids_top_sides_bottom( 2, 4,5), // wheat
+    new_block_tex_ids_top_sides_bottom( 8,9,10), // swamp_grass
+    new_block_tex_ids_top_sides_bottom( 6,9,10), // swamp_berries
+    new_block_tex_ids_top_sides_bottom( 7,9,10), // swamp_backberries
+    new_block_tex_ids_top_sides_bottom( 15,16,17), // frost_grass
+    new_block_tex_ids_top_sides_bottom( 13,16,17), // snow_crocus
+    new_block_tex_ids_top_sides_bottom( 14,16,17), // snow_blackberries
+    new_block_tex_ids_regular( 41), // plank
+    new_block_tex_ids_regular( 42), // slab
+    new_block_tex_ids_regular( 43), // brick
+    new_block_tex_ids_regular( 35), // cobblestone
+    new_block_tex_ids_regular( 36), // bedrock
+    new_block_tex_ids_regular( 38), // sand
+    new_block_tex_ids_regular( 37), // rare_sand
+    new_block_tex_ids_regular( 40), // gravel
+    new_block_tex_ids_regular( 39), // wet_gravel
+    new_block_tex_ids_top_sides_bottom( 26,25,26), // oak_wood
+    new_block_tex_ids_top_sides_bottom( 26,24,26), // oak_stem
+    new_block_tex_ids_top_sides_bottom( 29,28,29), // pink_wood
+    new_block_tex_ids_top_sides_bottom( 29,27,29), // pink_stem
+    new_block_tex_ids_top_sides_bottom( 32,31,32), // dark_wood
+    new_block_tex_ids_top_sides_bottom( 32,30,32), // dark_stem
+    new_block_tex_ids_regular( 33), // obsidian
+    new_block_tex_ids_regular( 34), // sponge
+    new_block_tex_ids_regular( 15), // snow
+    new_block_tex_ids_regular( 18), // porous_rock
+    new_block_tex_ids_regular( 18), // highly_porous_rock
+    new_block_tex_ids_regular( 53) // limestone
+);
+
+const float[BLOCKS_LEN] BLOCK_OPACITY = float[BLOCKS_LEN](
+    0., // air
+    0.09, // water
+    0.009, // lava
+    0.1, // glass
+    0.7, // ice
+    0.1, // swamp_leaves
+    0.1, // golden_leaves
+    0.1, // oak_leaves
+    0.1, // peach_leaves
+    0.1, // aether_leaves
+    0.1, // frost_leaves
+    1., // stone
+    1., // gold_ore
+    1., // iron_ore
+    1., // coal_ore
+    1., // diamond_ore
+    1., // redstone_ore
+    1., // dirt
+    1., // swamp_dirt
+    1., // iron_rich_dirt
+    1., // aether_dirt
+    1., // frost_dirt
+    1., // grass
+    1., // berries
+    1., // strawberries
+    1., // wheat
+    1., // swamp_grass
+    1., // swamp_berries
+    1., // swamp_backberries
+    1., // frost_grass
+    1., // snow_crocus
+    1., // snow_blackberries
+    1., // plank
+    1., // slab
+    1., // brick
+    1., // cobblestone
+    1., // bedrock
+    1., // sand
+    1., // rare_sand
+    1., // gravel
+    1., // wet_gravel
+    1., // oak_wood
+    1., // oak_stem
+    1., // pink_wood
+    1., // pink_stem
+    1., // dark_wood
+    1., // dark_stem
+    1., // obsidian
+    1., // sponge
+    1., // snow
+    1., // porous_rock
+    1., // highly_porous_rock
+    1.// limestone
+);
+
+const float[BLOCKS_LEN] BLOCK_MASS = float[BLOCKS_LEN](
+    0.05, // air
+    1.0, // water
+    3.011, // lava
+    0.1, // glass
+    0.9167, // ice
+    0.143, // swamp_leaves
+    0.143, // golden_leaves
+    0.143, // oak_leaves
+    0.143, // peach_leaves
+    0.143, // aether_leaves
+    0.143, // frost_leaves
+    2.26796, // stone
+    2.9, // gold_ore
+    2.7, // iron_ore
+    2.0, // coal_ore
+    2.1, // diamond_ore
+    2.2, // redstone_ore
+    1.3, // dirt
+    1.3, // swamp_dirt
+    1.3, // iron_rich_dirt
+    1.3, // aether_dirt
+    1.3, // frost_dirt
+    1.4, // grass
+    1.4, // berries
+    1.4, // strawberries
+    1.4, // wheat
+    1.4, // swamp_grass
+    1.4, // swamp_berries
+    1.4, // swamp_backberries
+    1.4, // frost_grass
+    1.4, // snow_crocus
+    1.4, // snow_blackberries
+    4.0, // plank
+    2.26796, // slab
+    1.9, // brick
+    2.26796, // cobblestone
+    3.1, // bedrock
+    1.62, // sand
+    1.62, // rare_sand
+    1.68, // gravel
+    1.68, // wet_gravel
+    1.5, // oak_wood
+    1.5, // oak_stem
+    1.5, // pink_wood
+    1.5, // pink_stem
+    1.5, // dark_wood
+    1.5, // dark_stem
+    3.1, // obsidian
+    0.1, // sponge
+    0.05, // snow
+    2., // porous_rock
+    1.9, // highly_porous_rock
+    1.8// limestone
+);
+
+const float[BLOCKS_LEN] BLOCK_HUMIDITY = float[BLOCKS_LEN](
+    0, // air
+    255, // water
+    0, // lava
+    2, // glass
+    255, // ice
+    128, // swamp_leaves
+    64, // golden_leaves
+    76, // oak_leaves
+    65, // peach_leaves
+    20, // aether_leaves
+    50, // frost_leaves
+    10, // stone
+    8, // gold_ore
+    8, // iron_ore
+    6, // coal_ore
+    6, // diamond_ore
+    3, // redstone_ore
+    50, // dirt
+    86, // swamp_dirt
+    86, // iron_rich_dirt
+    20, // aether_dirt
+    40, // frost_dirt
+    60, // grass
+    78, // berries
+    67, // strawberries
+    54, // wheat
+    120, // swamp_grass
+    100, // swamp_berries
+    110, // swamp_backberries
+    50, // frost_grass
+    55, // snow_crocus
+    60, // snow_blackberries
+    20, // plank
+    5, // slab
+    12, // brick
+    10, // cobblestone
+    0, // bedrock
+    1, // sand
+    1, // rare_sand
+    3, // gravel
+    60, // wet_gravel
+    60, // oak_wood
+    100, // oak_stem
+    50, // pink_wood
+    70, // pink_stem
+    100, // dark_wood
+    180, // dark_stem
+    15, // obsidian
+    200, // sponge
+    120, // snow
+    30, // porous_rock
+    60, // highly_porous_rock
+    10 // limestone
+);
+
+
+const float[BLOCKS_LEN] BLOCK_HUMIDITY_DIFFUSION_RATE = float[BLOCKS_LEN](
+    0.8, // air
+    0.2, // water
+    1.0, // lava
+    0.0, // glass
+    0.05, // ice
+    0.8, // swamp_leaves
+    0.5, // golden_leaves
+    0.6, // oak_leaves
+    0.6, // peach_leaves
+    0.2, // aether_leaves
+    0.4, // frost_leaves
+    0.05, // stone
+    0.05, // gold_ore
+    0.05, // iron_ore
+    0.4, // coal_ore
+    0.05, // diamond_ore
+    0.5, // redstone_ore
+    0.7, // dirt
+    0.7, // swamp_dirt
+    0.75, // iron_rich_dirt
+    0.1, // aether_dirt
+    0.5, // frost_dirt
+    0.5, // grass
+    0.45, // berries
+    0.34, // strawberries
+    0.5, // wheat
+    0.55, // swamp_grass
+    0.5, // swamp_berries
+    0.5, // swamp_backberries
+    0.34, // frost_grass
+    0.33, // snow_crocus
+    0.3, // snow_blackberries
+    0.1, // plank
+    0.05, // slab
+    0.01, // brick
+    0.5, // cobblestone
+    0, // bedrock
+    1, // sand
+    1, // rare_sand
+    3, // gravel
+    60, // wet_gravel
+    60, // oak_wood
+    100, // oak_stem
+    50, // pink_wood
+    70, // pink_stem
+    100, // dark_wood
+    180, // dark_stem
+    15, // obsidian
+    200, // sponge
+    120, // snow
+    1, // porous_rock
+    1, // highly_porous_rock
+    1 // limestone
+);
+const uint BLOCK_SENSORY_FEATURES_LEN = 6;
+const bool[BLOCKS_LEN][BLOCK_SENSORY_FEATURES_LEN] BLOCK_SENSORY_FEATURES = bool[BLOCKS_LEN][BLOCK_SENSORY_FEATURES_LEN](
+////////////////// is_water, is_organic, is_stone, is_edible, is_soil, is_processed
+    bool[BLOCK_SENSORY_FEATURES_LEN](false,false,false,false,false,false), // air
+    bool[BLOCK_SENSORY_FEATURES_LEN](true,false,false,false,false,false), // water
+    bool[BLOCK_SENSORY_FEATURES_LEN](false,false,true,false,false,false), // lava
+    bool[BLOCK_SENSORY_FEATURES_LEN](false,false,false,false,false,true), // glass
+    bool[BLOCK_SENSORY_FEATURES_LEN](true,false,true,false,false,false), // ice
+    bool[BLOCK_SENSORY_FEATURES_LEN](false,true,false,false,false,false), // swamp_leaves
+    bool[BLOCK_SENSORY_FEATURES_LEN](false,true,false,false,false,false), // golden_leaves
+    bool[BLOCK_SENSORY_FEATURES_LEN](false,true,false,false,false,false), // oak_leaves
+    bool[BLOCK_SENSORY_FEATURES_LEN](false,true,false,false,false,false), // peach_leaves
+    bool[BLOCK_SENSORY_FEATURES_LEN](false,true,false,false,false,false), // aether_leaves
+    bool[BLOCK_SENSORY_FEATURES_LEN](false,true,false,false,false,false), // frost_leaves
+    bool[BLOCK_SENSORY_FEATURES_LEN](false,false,true,false,false,false), // stone
+    bool[BLOCK_SENSORY_FEATURES_LEN](false,false,true,false,false,false), // gold_ore
+    bool[BLOCK_SENSORY_FEATURES_LEN](false,false,true,false,false,false), // iron_ore
+    bool[BLOCK_SENSORY_FEATURES_LEN](false,false,true,false,false,false), // coal_ore
+    bool[BLOCK_SENSORY_FEATURES_LEN](false,false,true,false,false,false), // diamond_ore
+    bool[BLOCK_SENSORY_FEATURES_LEN](false,false,true,false,false,false), // redstone_ore
+    bool[BLOCK_SENSORY_FEATURES_LEN](false,true,false,false,true,false), // dirt
+    bool[BLOCK_SENSORY_FEATURES_LEN](false,true,false,false,true,false), // swamp_dirt
+    bool[BLOCK_SENSORY_FEATURES_LEN](false,true,false,false,true,false), // iron_rich_dirt
+    bool[BLOCK_SENSORY_FEATURES_LEN](false,true,false,false,true,false), // aether_dirt
+    bool[BLOCK_SENSORY_FEATURES_LEN](false,true,false,false,true,false), // frost_dirt
+    bool[BLOCK_SENSORY_FEATURES_LEN](true,true,false,false,true,false), // grass
+    bool[BLOCK_SENSORY_FEATURES_LEN](true,true,false,true,true,false), // berries
+    bool[BLOCK_SENSORY_FEATURES_LEN](true,true,false,true,true,false), // strawberries
+    bool[BLOCK_SENSORY_FEATURES_LEN](true,true,false,true,true,false), // wheat
+    bool[BLOCK_SENSORY_FEATURES_LEN](true,true,false,false,true,false), // swamp_grass
+    bool[BLOCK_SENSORY_FEATURES_LEN](true,true,false,true,true,false), // swamp_berries
+    bool[BLOCK_SENSORY_FEATURES_LEN](true,true,false,true,true,false), // swamp_backberries
+    bool[BLOCK_SENSORY_FEATURES_LEN](true,true,false,false,true,false), // frost_grass
+    bool[BLOCK_SENSORY_FEATURES_LEN](true,true,false,true,true,false), // snow_crocus
+    bool[BLOCK_SENSORY_FEATURES_LEN](true,true,false,true,true,false), // snow_blackberries
+    bool[BLOCK_SENSORY_FEATURES_LEN](false,true,false,false,false,true), // plank
+    bool[BLOCK_SENSORY_FEATURES_LEN](false,false,true,false,false,true), // slab
+    bool[BLOCK_SENSORY_FEATURES_LEN](false,false,true,false,false,true), // brick
+    bool[BLOCK_SENSORY_FEATURES_LEN](false,false,true,false,false,true), // cobblestone
+    bool[BLOCK_SENSORY_FEATURES_LEN](false,false,true,false,false,false), // bedrock
+    bool[BLOCK_SENSORY_FEATURES_LEN](false,false,false,true,false,false), // sand
+    bool[BLOCK_SENSORY_FEATURES_LEN](false,false,false,true,false,false), // rare_sand
+    bool[BLOCK_SENSORY_FEATURES_LEN](false,false,false,true,false,false), // gravel
+    bool[BLOCK_SENSORY_FEATURES_LEN](true,false,false,true,false,false), // wet_gravel
+    bool[BLOCK_SENSORY_FEATURES_LEN](false,true,true,false,false,false), // oak_wood
+    bool[BLOCK_SENSORY_FEATURES_LEN](false,true,true,false,false,false), // oak_stem
+    bool[BLOCK_SENSORY_FEATURES_LEN](false,true,true,false,false,false), // pink_wood
+    bool[BLOCK_SENSORY_FEATURES_LEN](false,true,true,false,false,false), // pink_stem
+    bool[BLOCK_SENSORY_FEATURES_LEN](false,true,true,false,false,false), // dark_wood
+    bool[BLOCK_SENSORY_FEATURES_LEN](false,true,true,false,false,false), // dark_stem
+    bool[BLOCK_SENSORY_FEATURES_LEN](false,false,true,false,false,false), // obsidian
+    bool[BLOCK_SENSORY_FEATURES_LEN](true,true,false,false,false,false), // sponge
+    bool[BLOCK_SENSORY_FEATURES_LEN](true,false,false,false,true,false), // snow
+    bool[BLOCK_SENSORY_FEATURES_LEN](false,false,true,false,false,false), // porous_rock
+    bool[BLOCK_SENSORY_FEATURES_LEN](false,false,true,false,false,false), // highly_porous_rock
+    bool[BLOCK_SENSORY_FEATURES_LEN](false,false,true,false,false,false) // limestone
+);
+
+float get_opacity(uint block_id){
+    return BLOCK_OPACITY[block_id];
+}
+uint get_texture_id(uint block_id, uint face_orientation){
+    return BLOCK_TEXTURE_IDS[block_id][face_orientation];
+}
+Block get_default_block_meta(uint block_id,float chunk_humidity,float chunk_temperature){
+    return Block(
+        block_id,
+        block_id,
+        uint(BLOCK_HUMIDITY[block_id]*chunk_humidity),
+        0,
+        uint(chunk_temperature),
+        0
+    );
+}
+/////////////////////////////////////////////////////////////////////////////////
+///////// BELOW SECTION CONTAINS DEFINITIONS OF HTM NEURAL NETWORKS
+/////////////////////////////////////////////////////////////////////////////////
+
+const uint ENTITY_LIDAR_COUNT = 32;
+const uint HTM_INPUT_SIZE = (ENTITY_LIDAR_COUNT)*(BLOCKS_LEN);
+const uint HTM_MINICOLUMNS = 64;
+const float HTM_POTENTIAL_POOL_SPARSITY = 0.4; // the fraction of input that constitutes potential pool of a minicolumn
+const uint HTM_TOTAL_FEEDFORWARD_CONNECTIONS = uint(HTM_INPUT_SIZE*HTM_POTENTIAL_POOL_SPARSITY);
+const uint HTM_FEEDFORWARD_CONNECTIONS_PER_MINICOLUMN = 32;
+const uint ENTITY_BLOCK_SLOTS = 8;
+const uint HTM_MINICOLUMN_LAYERS = 6;
+const float HTM_PERMANENCE_THRESHOLD = 0.1;
+const uint HTM_LIMIT_OF_MINICOLUMNS_TO_ACTIVATE = HTM_MINICOLUMNS/8;
+const float HTM_PERMAMENCE_DECREMENT = -0.04;
+const float HTM_PERMAMENCE_INCREMENT = 0.08;
+const uint HTM_MAX_SEGMENTS = 4;
+const uint HTM_CONTEXT_CONNECTIONS_PER_MINICOLUMN = 16;
+
+struct HtmFeedforwardConnection{
+    uint minicolumn_id;
+    float permanence;
+    uint input_id;
+};
+struct HtmContextConnection{
+    uint minicolumn_id;
+    float permanence;
+    uint segment_id;
+};
+struct HtmMinicolumn{
+    uint active_layer; // there can be only one active neuron in each minicolumns, except when the columns is bursting.
+    // Bursting is represented with number HTM_MINICOLUMN_LAYERS. If the minicolumn is not active then the value is HTM_MINICOLUMN_LAYERS+1
+    HtmContextConnection[HTM_CONTEXT_CONNECTIONS_PER_MINICOLUMN] context_connections;
+    uint[HTM_FEEDFORWARD_CONNECTIONS_PER_MINICOLUMN] feedforward_connection_indices;
+};
+struct HtmInput{
+    bool is_active;
+    uint feedforward_connections_offset;
+    uint feedforward_connections_len;
+};
+struct HtmEntity{
+    uint[ENTITY_LIDAR_COUNT] lidars;
+    HtmFeedforwardConnection[HTM_TOTAL_FEEDFORWARD_CONNECTIONS] htm_feedforward_connections;
+    HtmMinicolumn[HTM_MINICOLUMNS] htm_minicolumns;
+    HtmInput[HTM_INPUT_SIZE] htm_inputs;
+    uint bone_idx;
+    uint main;
+    float energy;
+    float speed;
+    float max_speed;
+};
+
+/////////////////////////////////////////////////////////////////////////////////
+///////// BELOW SECTION CONTAINS DEFINITIONS OF ARTIFICIAL NEURAL NETWORKS
+/////////////////////////////////////////////////////////////////////////////////
+
+const uint ANN_LIDAR_COUNT = 32;
+const uint BLOCK_EXTENDED_SENSORY_FEATURES_LEN = BLOCK_SENSORY_FEATURES_LEN+2;// + block_mass and is_air
+const uint ANN_TOUCHED_BLOCK_COUNT = 8;//cube has 8 corners
+const uint ANN_INPUT_SIZE = ANN_LIDAR_COUNT+BLOCK_EXTENDED_SENSORY_FEATURES_LEN*ANN_TOUCHED_BLOCK_COUNT;
+const uint ANN_HIDDEN_SIZE = 32;
+const uint ANN_INPUT_CONNECTIONS_PER_HIDDEN_NEURON = 16;
+const uint ANN_LATENT_SIZE = 32;
+const uint ANN_HIDDEN_CONNECTIONS_PER_LATENT_NEURON = 4;
+const uint ANN_LATENT_CONNECTIONS_PER_LATENT_NEURON = 4;
+const uint ANN_OUTPUT_ATTACK_MUSCLES_SIZE = 4;
+const uint ANN_OUTPUT_MOVEMENT_MUSCLES_SIZE = 20;
+const uint ANN_OUTPUT_ROTATION_MUSCLES_SIZE = 8;
+const uint ANN_OUTPUT_ATTACK_MUSCLES_OFFSET = 0;
+const uint ANN_OUTPUT_MOVEMENT_MUSCLES_OFFSET= ANN_OUTPUT_ATTACK_MUSCLES_OFFSET+ANN_OUTPUT_ATTACK_MUSCLES_SIZE;
+const uint ANN_OUTPUT_ROTATION_MUSCLES_OFFSET = ANN_OUTPUT_MOVEMENT_MUSCLES_OFFSET + ANN_OUTPUT_MOVEMENT_MUSCLES_SIZE;
+const uint ANN_OUTPUT_SIZE = ANN_OUTPUT_MOVEMENT_MUSCLES_SIZE+ANN_OUTPUT_ATTACK_MUSCLES_SIZE+ANN_OUTPUT_ROTATION_MUSCLES_SIZE;
+const uint ANN_LATENT_CONNECTIONS_PER_OUTPUT_NEURON = 4;
+const uint ANN_MAX_SIZE = max(max(max(ANN_HIDDEN_SIZE,ANN_LATENT_SIZE),ANN_OUTPUT_SIZE),ANN_INPUT_SIZE);
+const float ROTATION_MUSCLE_STRENGTH = 0.01;
+const vec2[ANN_OUTPUT_ROTATION_MUSCLES_SIZE] ANN_IMPULSES_OF_ROTATION_MUSCLES = vec2[ANN_OUTPUT_ROTATION_MUSCLES_SIZE](
+    vec2(ROTATION_MUSCLE_STRENGTH,0),
+    vec2(ROTATION_MUSCLE_STRENGTH,0),
+    vec2(ROTATION_MUSCLE_STRENGTH,0),
+    vec2(ROTATION_MUSCLE_STRENGTH,0),
+    vec2(0,ROTATION_MUSCLE_STRENGTH),
+    vec2(0,ROTATION_MUSCLE_STRENGTH),
+    vec2(0,ROTATION_MUSCLE_STRENGTH),
+    vec2(0,ROTATION_MUSCLE_STRENGTH)
+);
+#define xyz_point_on_unit_xz_circle(angle) vec3(sin(angle),0,cos(angle))
+const vec3[ANN_OUTPUT_MOVEMENT_MUSCLES_SIZE] ANN_IMPULSES_OF_MOVEMENT_MUSCLES = vec3[ANN_OUTPUT_MOVEMENT_MUSCLES_SIZE](
+    vec3(0,1,0),
+    vec3(0,1,0),
+    vec3(0,-1,0),
+    vec3(0,-1,0),
+    xyz_point_on_unit_xz_circle(2.*PI*0./16.),
+    xyz_point_on_unit_xz_circle(2.*PI*1./16.),
+    xyz_point_on_unit_xz_circle(2.*PI*2./16.),
+    xyz_point_on_unit_xz_circle(2.*PI*3./16.),
+    xyz_point_on_unit_xz_circle(2.*PI*4./16.),
+    xyz_point_on_unit_xz_circle(2.*PI*5./16.),
+    xyz_point_on_unit_xz_circle(2.*PI*6./16.),
+    xyz_point_on_unit_xz_circle(2.*PI*7./16.),
+    xyz_point_on_unit_xz_circle(2.*PI*8./16.),
+    xyz_point_on_unit_xz_circle(2.*PI*9./16.),
+    xyz_point_on_unit_xz_circle(2.*PI*10./16.),
+    xyz_point_on_unit_xz_circle(2.*PI*11./16.),
+    xyz_point_on_unit_xz_circle(2.*PI*12./16.),
+    xyz_point_on_unit_xz_circle(2.*PI*13./16.),
+    xyz_point_on_unit_xz_circle(2.*PI*14./16.),
+    xyz_point_on_unit_xz_circle(2.*PI*15./16.)
+);
+
+struct AnnSparseConnection{
+    uint src_neuron;
+    float weight;
+};
+struct AnnLidar{
+    vec3 direction;
+    float dummy;
+};
+struct AnnSparseHiddenNeuron{
+    AnnSparseConnection[ANN_INPUT_CONNECTIONS_PER_HIDDEN_NEURON] incoming;
+    float bias;
+};
+struct AnnSparseLatentNeuron{
+    AnnSparseConnection[ANN_HIDDEN_CONNECTIONS_PER_LATENT_NEURON] incoming_from_hidden;
+    AnnSparseConnection[ANN_LATENT_CONNECTIONS_PER_LATENT_NEURON] recurrent_from_latent;
+    float bias;
+};
+struct AnnSparseOutputNeuron{
+    AnnSparseConnection[ANN_LATENT_CONNECTIONS_PER_OUTPUT_NEURON] incoming;
+    float bias;
+};
+struct AnnEntity{
+    AnnSparseHiddenNeuron[ANN_HIDDEN_SIZE] ann_hidden;
+    AnnSparseLatentNeuron[ANN_LATENT_SIZE] ann_latent;
+    AnnSparseOutputNeuron[ANN_OUTPUT_SIZE] ann_output;
+    float[ANN_LATENT_SIZE] latent;
+    AnnLidar[ANN_LIDAR_COUNT] lidars;
+    uint bone_idx;
+    uint main;
+    float energy;
+    float speed;
+};
+
+
+///////////////////////////////////////////////////////////////////////////
+///////////////// BELOW SECTION CONTAINS CONSTANTS AND DEFINITIONS USED BY WORLD GENERATOR
+///////////////////////////////////////////////////////////////////////////
+
+const uint BIOME_ID_ARCTIC_DESERT = 0;
+const uint BIOME_ID_TAIGA = 1;
+const uint BIOME_ID_ARCTIC = 2;
+const uint BIOME_ID_DESERT = 3;
+const uint BIOME_ID_PLAINS = 4;
+const uint BIOME_ID_SWAMP = 5;
+const uint BIOME_COUNT = 6;
+uint get_biome(float humidity,float temperature){
+    uint freezing = uint(temperature < FREEZING_TEMPERATURE);
+    uint dry = uint(humidity > DESERT_HUMIDITY) + uint(humidity > SWAMP_HUMIDITY);
+    return freezing*3+dry;
+}
+const uint MAX_BIOME_RESOURCES = 4;
+const uint MAX_BIOME_SURFACE_ARTIFACTS = 4;
+struct BiomeRes{
+    uint res;
+    float prob;
+};
+struct BiomeProp{
+    uint dirt;
+    uint grass;
+    uint water_top;
+    uint sea_depth;
+    BiomeRes[MAX_BIOME_RESOURCES] resources;
+    BiomeRes[MAX_BIOME_SURFACE_ARTIFACTS] surface_artifacts;
+};
+uint get_biome_resource(const BiomeProp biome, float random_value){
+    for(uint i=0;i<MAX_BIOME_RESOURCES;i++){
+        if(random_value < biome.resources[i].prob){
+            return biome.resources[i].res;
+        }
+    }
+    return biome.grass;
+}
+uint get_biome_surface_artifact(const BiomeProp biome, float random_value){
+    for(uint i=0;i<MAX_BIOME_SURFACE_ARTIFACTS;i++){
+        if(random_value < biome.surface_artifacts[i].prob){
+            return biome.surface_artifacts[i].res;
+        }
+    }
+    return BLOCK_ID_AIR;
+}
+#define biome_res4(prob,res0,prob0,res1,prob1,res2,prob2,res3,prob3) BiomeRes[MAX_BIOME_RESOURCES](BiomeRes(res0,prob*prob0),BiomeRes(res1,prob*(prob0+prob1)),BiomeRes(res2,prob*(prob0+prob1+prob2)),BiomeRes(res3,prob*(prob0+prob1+prob2+prob3)))
+#define biome_res3(prob,res0,prob0,res1,prob1,res2,prob2) biome_res4(prob,res0,prob0,res1,prob1,res2,prob2,BLOCK_ID_AIR,-1)
+#define biome_res2(prob,res0,prob0,res1,prob1) biome_res3(prob,res0,prob0,res1,prob1,BLOCK_ID_AIR,-1)
+#define biome_res1(prob,res0,prob0) biome_res2(prob,res0,prob0,BLOCK_ID_AIR,-1)
+#define biome_res0 biome_res1(1,BLOCK_ID_AIR,-1)
+
+const BiomeProp[BIOME_COUNT] BIOMES = BiomeProp[BIOME_COUNT](
+    BiomeProp(BLOCK_ID_DIRT,BLOCK_ID_GRASS,BLOCK_ID_WATER,0,biome_res3(0.1,BLOCK_ID_BERRIES,0.5,BLOCK_ID_STRAWBERRIES,0.25,BLOCK_ID_WHEAT,0.25),biome_res2(0.01,BLOCK_ID_OAK_STEM,0.8,BLOCK_ID_PINK_STEM,0.2)),//BIOME_ID_PLAINS
+    BiomeProp(BLOCK_ID_SAND,BLOCK_ID_SAND,BLOCK_ID_WATER,0,biome_res0,biome_res1(0.01,BLOCK_ID_AETHER_LEAVES,1)),//BIOME_ID_DESERT
+    BiomeProp(BLOCK_ID_FROST_DIRT,BLOCK_ID_FROST_DIRT,BLOCK_ID_ICE,15,biome_res0,biome_res1(0.01,BLOCK_ID_FROST_LEAVES,1)),//BIOME_ID_ARCTIC_DESERT
+    BiomeProp(BLOCK_ID_FROST_DIRT,BLOCK_ID_FROST_GRASS,BLOCK_ID_ICE,5,biome_res2(0.1,BLOCK_ID_SNOW_BLACKBERRIES, 0.4,BLOCK_ID_SNOW_CROCUS,0.6),biome_res2(0.01,BLOCK_ID_OAK_STEM, 0.8,BLOCK_ID_FROST_LEAVES,0.2)),//BIOME_ID_TAIGA
+    BiomeProp(BLOCK_ID_FROST_DIRT,BLOCK_ID_SNOW,BLOCK_ID_ICE,15,biome_res2(0.05,BLOCK_ID_SNOW_BLACKBERRIES,0.4,BLOCK_ID_SNOW_CROCUS,0.6),biome_res1(0.01,BLOCK_ID_FROST_LEAVES,1)),//BIOME_ID_ARCTIC
+    BiomeProp(BLOCK_ID_SWAMP_DIRT,BLOCK_ID_SWAMP_GRASS,BLOCK_ID_WATER,0,biome_res2(0.15,BLOCK_ID_SWAMP_BACKBERRIES, 0.5,BLOCK_ID_SWAMP_BERRIES,0.5),biome_res2(0.01,BLOCK_ID_OAK_STEM, 0.8,BLOCK_ID_DARK_STEM,0.2))//BIOME_ID_SWAMP
+);
+
+#endif // CONSTANTS_COMP

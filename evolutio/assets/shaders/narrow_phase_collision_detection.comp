@@ -1,0 +1,100 @@
+#version 450
+#extension GL_EXT_shader_atomic_float : enable
+#extension GL_EXT_debug_printf : enable
+#define IS_AVAILABLE_BUFFER_GLOBAL_MUTABLES
+#define IS_AVAILABLE_BUFFER_BONES
+#define IS_AVAILABLE_BUFFER_COLLISION_GRID
+
+
+#include "descriptors_compute.comp"
+layout (local_size_x_id = GROUP_SIZE_CONST_ID) in;
+
+void main() {
+    uint gID = gl_GlobalInvocationID.x;
+    const uint bone_count = global_mutables.bones;
+    if (gID < bone_count){
+        const Bone bone = bones[gID];
+        vec3 half_hitbox = vec3(bone.half_side_length,bone.half_height,bone.half_side_length);
+        vec3 hitbox_from = bone.new_center-half_hitbox;
+        vec3 hitbox_to = bone.new_center+half_hitbox;
+        vec3 hitbox_to_ceil = ceil(hitbox_to);
+
+        uint potential_collisions_len = 0;
+        uint[14*(BROAD_PHASE_CELL_CAPACITY)] potential_collisions;//14=13 neighbour cells + 1 middle cell
+
+        uvec3 cell_pos = broad_phase_position_to_cell_pos(bone.new_center);
+        uint cell_idx = broad_phase_cell_pos_to_cell_idx(cell_pos);
+        uint cell_len = min(collision_grid[cell_idx].len, BROAD_PHASE_CELL_CAPACITY);
+        for(int i=0;i<cell_len;i++){// if everything is written correctly, gID must be located somewhere in this cell and the i<cell_len should never be false.
+            // However, let's leave this extra check just in case, to make sure that infinite loop won't suddenly arise due to some bug earlier in the code.
+            uint neighbouring_bone_idx = collision_grid[cell_idx].contents[i];
+            if(neighbouring_bone_idx==gID)break;
+            potential_collisions[potential_collisions_len++] = neighbouring_bone_idx;
+        }
+
+        uvec3[13] neighbour_cells = uvec3[13](
+            // We need to check neighboring cells in collision_grid.
+            // There are 27 cells (3x3) adjacent to the central cell. The central center will be treated in a special way.
+            // Hence here we only need to test 26 neighbours. Moreover, since we're testing all bones in parallel, if a bone X
+            // collides with bone Y, then bone Y will also collide with bone X. We want to avoid duplicate detections. Hence
+            // we will only check half (13) of those neighbours, and other other half will be checked in parallel by other bones.
+            ivec3(0,0,1),
+            ivec3(1,0,0),
+            ivec3(1,0,1),
+            ivec3(1,0,-1),
+
+            ivec3(0,1,1),
+            ivec3(1,1,0),
+            ivec3(1,1,1),
+            ivec3(1,1,-1),
+
+            ivec3(0,-1,1),
+            ivec3(1,-1,0),
+            ivec3(1,-1,1),
+            ivec3(1,-1,-1),
+
+            ivec3(0,1,0)
+        );
+
+        for(int i=0;i<13;i++){
+            uvec3 neighbour_pos = cell_pos + neighbour_cells[i]; // notice that if cell_pos.x == 0, then cell_pos.x - 1 == MAX_INT, which of course must be outside of world borders
+            if(is_in_world_borders(neighbour_pos)){
+                uint neighbour_idx = broad_phase_cell_pos_to_cell_idx(neighbour_pos);
+                uint neighbour_len = min(collision_grid[neighbour_idx].len, BROAD_PHASE_CELL_CAPACITY);
+                for(uint j=0;j<neighbour_len;j++){
+                    uint neighbouring_bone_idx =  collision_grid[neighbour_idx].contents[j];
+                    potential_collisions[potential_collisions_len++] = neighbouring_bone_idx;
+                }
+            }
+        }
+        vec3 bone_impulse = vec3(0,0,0);
+        for(int i=0;i<potential_collisions_len;i++){
+            uint neighbouring_bone_idx = potential_collisions[i];
+            const Bone neighbour_bone = bones[neighbouring_bone_idx];
+            vec3 neighbour_half_hitbox = vec3(neighbour_bone.half_side_length,neighbour_bone.half_height,neighbour_bone.half_side_length);
+            vec3 neighbour_hitbox_from = neighbour_bone.new_center-neighbour_half_hitbox;
+            vec3 neighbour_hitbox_to = neighbour_bone.new_center+neighbour_half_hitbox;
+            if (all(lessThan(neighbour_hitbox_from, hitbox_to)) && all(lessThan(hitbox_from, neighbour_hitbox_to))) {
+                vec3 penetration_distance_from = hitbox_from - neighbour_hitbox_to;
+                vec3 penetration_distance_to = hitbox_to - neighbour_hitbox_from;
+                /*penetration_distance = vector pointing from this bone towards neighbouring bone. This vector is of length equal to the diagonal of the
+                overlapping cuboid region.*/
+                vec3 penetration_distance = mix(penetration_distance_to, penetration_distance_from, lessThan(-penetration_distance_from, penetration_distance_to));
+//                vec3 overlapping_area_on_each_face = abs(vec3(
+//                    penetration_distance.y*penetration_distance.z,
+//                    penetration_distance.z*penetration_distance.x,
+//                    penetration_distance.x*penetration_distance.y
+//                ));
+                vec3 impulse = /*overlapping_area_on_each_face * */dot(penetration_distance,penetration_distance) * penetration_distance * (BONE_COLLISION_FORCE_PER_AREA_UNIT) * 0.5;
+                bone_impulse -= impulse;
+//                debugPrintfEXT("%d %d:%v3f:%v3f", neighbouring_bone_idx, gID, bone.new_center, neighbour_bone.new_center);
+                atomicAdd(bones[neighbouring_bone_idx].impulse.x, impulse.x);
+                atomicAdd(bones[neighbouring_bone_idx].impulse.y, impulse.y);
+                atomicAdd(bones[neighbouring_bone_idx].impulse.z, impulse.z);
+            }
+        }
+        atomicAdd(bones[gID].impulse.x, bone_impulse.x);
+        atomicAdd(bones[gID].impulse.y, bone_impulse.y);
+        atomicAdd(bones[gID].impulse.z, bone_impulse.z);
+    }
+}

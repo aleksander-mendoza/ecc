@@ -12,6 +12,7 @@ use pyo3::{wrap_pyfunction, wrap_pymodule, PyObjectProtocol, PyNativeType};
 use pyo3::exceptions::PyValueError;
 use pyo3::PyResult;
 use pyo3::types::PyList;
+use rand::Rng;
 use vf::soft_wta::*;
 use vf::{ArrayCast, conv, VecCast, VectorField, VectorFieldDivAssign, VectorFieldMul, VectorFieldMulAssign, VectorFieldOne, VectorFieldZero};
 use vf::{arr2, arr3, slice_as_arr, tup2, tup3, tup4, tup6};
@@ -594,6 +595,19 @@ pub fn dense_to_sparse(bools:&PyArrayDyn<bool>)->PyResult<PyObject>{
     Ok(PyArray1::<u32>::from_vec(bools.py(),vf::dense_to_sparse(b)).to_object(bools.py()))
 }
 #[pyfunction]
+#[text_signature = "(probabilities)"]
+/// Returns a boolean tensor randomly sampled according to probabilities contained in another tensor
+pub fn sample(probabilities:&PyArrayDyn<f32>)->PyResult<&PyArrayDyn<bool>>{
+    let mut rng = rand::thread_rng();
+    let b = unsafe{probabilities.as_slice()?};
+    let mut d = PyArrayDyn::new(probabilities.py(), probabilities.dims(), false);
+    let ds = unsafe{d.as_slice_mut()}.unwrap();
+    for (&prob, sampled) in b.iter().zip(ds.iter_mut()){
+        *sampled = rng.gen::<f32>() < prob;
+    }
+    Ok(d)
+}
+#[pyfunction]
 #[text_signature = "(collector, n, from_inclusive, to_exclusive)"]
 /// Returns a vector containing indices of all true boolean values
 pub fn rand_set(py:Python, cardinality: usize, from_inclusive: usize, to_exclusive:usize)-> PyObject{
@@ -681,15 +695,16 @@ pub fn image_histogram<'py>(source: &'py PyArray3<u8>, source_mask:Option<PyObje
 #[pyfunction]
 #[text_signature = "(histogram)"]
 /// `histogram` shape `[channels, 256]`
-pub fn normalize_histogram<'py>(histogram: &'py PyArray2<u32>) -> PyResult<&'py PyArray2<f32>> {
+pub fn normalize_histogram<'py>(histogram: &'py PyArrayDyn<u32>) -> PyResult<&'py PyArrayDyn<f32>> {
     let src_shape = histogram.shape();
-    assert_eq!(src_shape.len(),2,"Shape should be [channels, 256]");
-    let hist_shape = [src_shape[0],src_shape[1]];
+    assert!(src_shape.len()>=2,"Shape should be [channels, 256]");
+    assert_eq!(src_shape.last().copied().unwrap(),256, "Histograms must have 256 possible pixel values");
     let src = unsafe{histogram.as_slice()?};
     let hist = vf::histogram::normalize_histograms(src);
     let v = PyArray1::from_vec(histogram.py(),hist.into_vec());
-    v.reshape(hist_shape)
+    v.reshape(src_shape)
 }
+
 #[pyfunction]
 #[text_signature = "(histogram, ratio)"]
 /// `histogram` shape `[channels, 256]`.
@@ -909,6 +924,7 @@ fn histogram(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
 fn ecc_py(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
     m.add_class::<ConvShape>()?;
     m.add_wrapped(&wrap_pymodule!(histogram))?;
+    m.add_function(wrap_pyfunction!(sample, m)?)?;
     m.add_function(wrap_pyfunction!(version, m)?)?;
     m.add_function(wrap_pyfunction!(conv_out_size, m)?)?;
     m.add_function(wrap_pyfunction!(conv_in_size, m)?)?;

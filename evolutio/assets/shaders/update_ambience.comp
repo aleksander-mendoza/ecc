@@ -1,0 +1,77 @@
+#version 450
+//#extension GL_EXT_debug_printf : enable
+#define IS_AVAILABLE_BUFFER_GLOBAL_MUTABLES
+#define IS_AVAILABLE_BUFFER_INDIRECT
+#define IS_AVAILABLE_BUFFER_WORLD
+#define IS_AVAILABLE_BUFFER_WORLD_BLOCKS_TO_UPDATE
+#define IS_AVAILABLE_BUFFER_WORLD_BLOCKS_TO_UPDATE_COPY
+#define IS_AVAILABLE_BUFFER_WORLD_COPY
+#define IS_AVAILABLE_BUFFER_BLOCKS_TO_BE_INSERTED_OR_REMOVED
+
+
+#include "descriptors_ambience.comp"
+layout (local_size_x_id = GROUP_SIZE_CONST_ID) in;
+#include "utils.comp"
+
+void main() {
+    const uint gID = gl_GlobalInvocationID.x;
+    const uint world_blocks_to_update_even = global_mutables.world_blocks_to_update_even;
+    const uint world_blocks_to_update_odd = 1 - world_blocks_to_update_even;
+    const uint world_blocks_to_update_count = global_mutables.world_blocks_to_update[world_blocks_to_update_even];
+    if (gID < world_blocks_to_update_count){
+        const uint block_idx = get_world_blocks_to_update(gID, world_blocks_to_update_even);
+        const uint block_id = world[block_idx];
+        const uvec3 block_pos = world_idx_into_block_pos(block_idx);
+
+        const BlockProp p = BLOCK_PROPS[block_id];
+        bool update_neighbours = false;
+        if (p.falls_down && block_pos.y > 0 && constants.ambience_tick & p.change_rate == p.change_rate){
+            const uint block_below_idx = block_pos_into_world_idx(block_pos-uvec3(0, 1, 0));
+            const uint block_below = world[block_below_idx];
+            if (block_below==BLOCK_ID_AIR){
+                const uint block_below_semaphore = atomicCompSwap(world_copy[block_below_idx], BLOCK_ID_AIR, block_id);// this makes sure that
+                // no two threads concurrently place a block in the same place
+                if (block_below_semaphore==0){
+                    const uint block_semaphore = atomicCompSwap(world_copy[block_idx], block_id, BLOCK_ID_AIR);// this makes sure that
+                    // no two threads concurrently remove a block from the same place (or remove and insert something in the same place)
+                    if(block_semaphore==block_id){
+                        int offset = atomicAdd(global_mutables.blocks_to_be_inserted_or_removed, 2);
+                        blocks_to_be_inserted_or_removed[offset] = block_idx;//remove this one
+                        blocks_to_be_inserted_or_removed[offset+1] = block_below_idx;//insert this one
+                        update_neighbours = true;
+                    }else{
+                        world_copy[block_below_idx] = BLOCK_ID_AIR;
+                    }
+                }
+            }
+        }
+        if(update_neighbours){
+            int neighbours_to_update_len = 0;
+            uint[6] neighbours_to_update;
+            const uvec3[6] neighbours = uvec3[6](
+                uvec3(0, 1, 0),
+                uvec3(1, 0, 0),
+                uvec3(0, 0, 1),
+                uvec3(-1, 0, 0),
+                uvec3(0, 0, -1),
+                uvec3(0, -1, 0)
+            );
+            for (int neighbour=0; neighbour<6;neighbour++){
+                const uvec3 neighbour_pos = block_pos + neighbours[neighbour];
+                if (is_in_world_borders(neighbour_pos)) { //if pos.x==0 then pox.x-1==MAX_INT which obviously must be greater than world border
+                    neighbours_to_update[neighbours_to_update_len++] = block_pos_into_world_idx( neighbour_pos);
+                }
+            }
+
+            uint neighbours_to_update_offset = atomicAdd(global_mutables.world_blocks_to_update[world_blocks_to_update_odd],neighbours_to_update_len);
+
+            for(int i=0;i<neighbours_to_update_len;i++){
+                set_world_blocks_to_update(neighbours_to_update_offset + i, world_blocks_to_update_odd, neighbours_to_update[i]);
+            }
+        }
+    }
+    const uint lID = gl_LocalInvocationID.x;
+    if(lID==0){
+        set_indirect_dispatch(DISPATCH_INDIRECT_UPDATE_AMBIENCE_FACES, global_mutables.blocks_to_be_inserted_or_removed);
+    }
+}

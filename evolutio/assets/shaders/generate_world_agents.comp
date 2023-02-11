@@ -1,0 +1,102 @@
+#version 450
+//#extension GL_EXT_debug_printf : enable
+#define IS_AVAILABLE_BUFFER_BONES
+#define IS_AVAILABLE_BUFFER_GLOBAL_MUTABLES
+#define IS_AVAILABLE_BUFFER_WORLD
+#define IS_AVAILABLE_BUFFER_RAND_UINT
+#define IS_AVAILABLE_BUFFER_ANN_ENTITIES
+
+#include "descriptors_generate.comp"
+layout (local_size_x_id = GROUP_SIZE_CONST_ID) in;
+#include "utils.comp"
+
+void main() {
+    const uint gID = gl_GlobalInvocationID.x;
+    if(gID < global_mutables.ann_entities){
+        const uvec2 rand_pos = rand_vec2_world_pos(gID);
+        uvec3 block_pos = uvec3(rand_pos.x, SEA_LEVEL, rand_pos.y);
+        const uint block_idx = block_pos_into_world_idx(block_pos);
+        const bool go_down = is_air(block_idx);
+        const ivec3 block_idx_step_y_step_and_initial_y = go_down ? ivec3(-WORLD_BLOCK_STRIDE.y, -1, SEA_LEVEL+1) : ivec3(WORLD_BLOCK_STRIDE.y, 1, SEA_LEVEL);
+        ivec2 block_idx_and_y = ivec2(block_idx+block_idx_step_y_step_and_initial_y.x, block_idx_step_y_step_and_initial_y.y+block_idx_step_y_step_and_initial_y.z);
+        const uint limit = block_pos_into_world_idx(uvec3(rand_pos.x, go_down ? 0 : CHUNK_HEIGHT-1, rand_pos.y));
+        while (block_idx_and_y.x!=limit && is_air(block_idx_and_y.x)==go_down){
+            block_idx_and_y+=block_idx_step_y_step_and_initial_y.xy;
+        }
+        const vec3 agent_pos = vec3(rand_pos.x, block_idx_and_y.y, rand_pos.y)+vec3(0.5,0.5,0.5);
+        const uint agent_entity_idx = gID;
+        const Bone agent_bone = Bone(
+            agent_pos, // vec3 new_center;
+            BLOCK_ID_DIRT, //uint texture_for_block_id
+            vec3(0, 0, 0), // vec3 impulse;
+            1, // float mass;
+            agent_pos, // vec3 old_center;
+            encode_ann_entity_idx(agent_entity_idx), // uint entity_idx;
+            vec3(0, 0, 0), // vec3 position_relative_to_parent;
+            0, // uint parent_bone_idx;
+            0.48, // float half_side_length;
+            0.48, // float half_height;
+            vec2(0,0) // vec2 yaw_and_pitch
+        );
+        bones[gID] = agent_bone;
+
+        uint rand_index = (gID*0xAF03) % MAX_RAND_UINT;//this is just some arbitrary value
+        ann_entities[gID].bone_idx = gID;
+        ann_entities[gID].speed = 0.01;
+        for(int i=0;i<ANN_LATENT_SIZE;i++){
+            ann_entities[gID].latent[i] = rand_float_neg_pos(rand_index+=0x3477);
+            if(rand_index>=MAX_RAND_UINT)rand_index-=MAX_RAND_UINT;
+        }
+        for(int i=0;i<ANN_LIDAR_COUNT;i++){
+            ann_entities[gID].lidars[i].direction = rand_vec3(rand_index+=0x2C6A);
+            if(rand_index>=MAX_RAND_UINT)rand_index-=MAX_RAND_UINT;
+        }
+        for(int i=0;i<ANN_OUTPUT_SIZE;i++){
+            ann_entities[gID].ann_output[i].bias = rand_float_neg_pos(rand_index+=0x3D7F);
+            if(rand_index>=MAX_RAND_UINT)rand_index-=MAX_RAND_UINT;
+            for(int j=0;j<ANN_LATENT_CONNECTIONS_PER_OUTPUT_NEURON;j++){
+                const uint rand_incoming_idx = rand_uint[rand_index+=0x6F30]%ANN_LATENT_SIZE;
+                if(rand_index>=MAX_RAND_UINT)rand_index-=MAX_RAND_UINT;
+                ann_entities[gID].ann_output[i].incoming[j] = AnnSparseConnection(
+                    rand_incoming_idx,
+                    rand_float_neg_pos(rand_index+=0x69BF)
+                );
+                if(rand_index>=MAX_RAND_UINT)rand_index-=MAX_RAND_UINT;
+            }
+        }
+        for(int i=0;i<ANN_LATENT_SIZE;i++){
+            ann_entities[gID].ann_latent[i].bias = rand_float_neg_pos(rand_index+=0x0407);
+            if(rand_index>=MAX_RAND_UINT)rand_index-=MAX_RAND_UINT;
+            for(int j=0;j<ANN_HIDDEN_CONNECTIONS_PER_LATENT_NEURON;j++){
+                const uint rand_incoming_idx = rand_uint[rand_index+=0x6F30]%ANN_HIDDEN_SIZE;
+                if(rand_index>=MAX_RAND_UINT)rand_index-=MAX_RAND_UINT;
+                ann_entities[gID].ann_latent[i].incoming_from_hidden[j] = AnnSparseConnection(
+                    rand_incoming_idx,
+                    rand_float_neg_pos(rand_index+=0x69BE)
+                );
+                if(rand_index>=MAX_RAND_UINT)rand_index-=MAX_RAND_UINT;
+            }
+            for(int j=0;j<ANN_LATENT_CONNECTIONS_PER_LATENT_NEURON;j++){
+                const uint rand_incoming_idx = rand_uint[rand_index+=0x6FF0]%ANN_LATENT_SIZE;
+                if(rand_index>=MAX_RAND_UINT)rand_index-=MAX_RAND_UINT;
+                ann_entities[gID].ann_latent[i].recurrent_from_latent[j] = AnnSparseConnection(
+                    rand_incoming_idx,
+                    rand_float_neg_pos(rand_index+=0x09BF)
+                );
+                if(rand_index>=MAX_RAND_UINT)rand_index-=MAX_RAND_UINT;
+            }
+        }
+        for(int i=0;i<ANN_HIDDEN_SIZE;i++){
+            ann_entities[gID].ann_hidden[i].bias = rand_float_neg_pos(rand_index+=0x3477);
+            for(int j=0;j<ANN_INPUT_CONNECTIONS_PER_HIDDEN_NEURON;j++){
+                const uint rand_incoming_idx = rand_uint[rand_index+=0x1F30]%ANN_INPUT_SIZE;
+                if(rand_index>=MAX_RAND_UINT)rand_index-=MAX_RAND_UINT;
+                ann_entities[gID].ann_hidden[i].incoming[j] = AnnSparseConnection(
+                    rand_incoming_idx,
+                    rand_float_neg_pos(rand_index+=0x69BF)
+                );
+                if(rand_index>=MAX_RAND_UINT)rand_index-=MAX_RAND_UINT;
+            }
+        }
+    }
+}

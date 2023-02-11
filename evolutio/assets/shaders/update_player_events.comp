@@ -1,0 +1,34 @@
+#version 450
+#extension GL_GOOGLE_include_directive : enable
+//#extension GL_EXT_debug_printf : enable
+#define IS_AVAILABLE_BUFFER_GLOBAL_MUTABLES
+#define IS_AVAILABLE_BUFFER_WORLD
+#define IS_AVAILABLE_BUFFER_WORLD_COPY
+#define IS_AVAILABLE_BUFFER_PLAYER_EVENT
+#define IS_AVAILABLE_BUFFER_INDIRECT
+#define IS_AVAILABLE_BUFFER_BLOCKS_TO_BE_INSERTED_OR_REMOVED
+layout (local_size_x = 1) in;
+
+#include "descriptors_ambience.comp"
+#include "utils.comp"
+
+void main()
+{
+    const int tick = ++global_mutables.tick;
+    int blocks_to_be_inserted_or_removed_count = 0;
+    if (player_event.event_type == PLAYER_EVENT_SET_BLOCK){
+        // vec3_slot0 holds current player position
+        // vec3_slot1 holds ray cast direction
+        // u32_slot0 holds ray cast direction
+        const RayCastResult ray = ray_cast(player_event.vec3_slot0, player_event.vec3_slot1);
+        if (ray.found){
+            const uvec3 hit_pos = uvec3(player_event.u32_slot0>0?ray.prev_v:ray.v);
+            const uint hit_idx = block_pos_into_world_idx(hit_pos);
+            world[hit_idx].block_id_copy = player_event.u32_slot0;
+            blocks_to_be_inserted_or_removed[blocks_to_be_inserted_or_removed_count++] = hit_idx;
+        }
+    }
+    global_mutables.blocks_to_be_inserted_or_removed = blocks_to_be_inserted_or_removed_count;
+    set_indirect_dispatch(DISPATCH_INDIRECT_UPDATE_AMBIENCE_FACES, blocks_to_be_inserted_or_removed_count);
+}
+

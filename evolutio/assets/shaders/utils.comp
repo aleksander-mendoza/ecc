@@ -1,0 +1,557 @@
+#ifndef UTILS_COMP
+#define UTILS_COMP
+
+#include "constants.comp"
+
+#ifdef IS_AVAILABLE_BUFFER_WORLD
+
+uint get_block_id(uint block_idx){
+    return world[block_idx].block_id;
+}
+uint get_block_id_copy(uint block_idx){
+    return world[block_idx].block_id_copy;
+}
+uint get_block_id_at(uvec3 block_pos){
+    return get_block_id(block_pos_into_world_idx( block_pos));
+}
+float get_block_opacity(uint block_idx){
+    return get_opacity(get_block_id(block_idx));
+}
+float get_block_opacity_at(uvec3 block_pos){
+    return get_opacity(get_block_id_at(block_pos));
+}
+bool is_traversable(uint block_idx){
+    return get_block_id(block_idx)<NO_OF_TRAVERSABLE_BLOCKS;
+}
+bool is_transparent(uint block_idx){
+    return get_block_id(block_idx)<NO_OF_TRANSPARENT_BLOCKS;
+}
+bool is_air(uint block_idx){
+    return get_block_id(block_idx)==BLOCK_ID_AIR;
+}
+bool is_air_at(uvec3 block_pos){
+    return get_block_id_at(block_pos)==BLOCK_ID_AIR;
+}
+void set_block_id(uint block_idx, uint block) {
+    world[block_idx].block_id = block;
+}
+void set_block_id_at(uvec3 world_block_pos, uint block) {
+    set_block_id(block_pos_into_world_idx(world_block_pos),block);
+}
+void set_block_id_copy(uint block_idx, uint block) {
+    world[block_idx].block_id_copy = block;
+}
+void set_block_id_copy_at(uvec3 world_block_pos, uint block) {
+    set_block_id_copy(block_pos_into_world_idx(world_block_pos),block);
+}
+void remove_block_at(uvec3 world_block_pos) {
+    set_block_id_at(world_block_pos, BLOCK_ID_AIR);
+}
+void remove_block(uint block_idx) {
+    set_block_id(block_idx, BLOCK_ID_AIR);
+}
+void fill_column_to(uvec3 from_world_block_pos, uint to_y, uint block) {
+    const uint from_idx = block_pos_into_world_idx(from_world_block_pos);
+    const uint to_idx = block_pos_into_world_idx(uvec3(from_world_block_pos.x,to_y,from_world_block_pos.z));
+    for(uint i = from_idx; i<to_idx;i+=WORLD_AREA){
+        world[i].block_id = block;
+    }
+}
+void fill_column(uvec3 from_world_block_pos, uint height, uint block) {
+    fill_column_to(from_world_block_pos,from_world_block_pos.y+height,block);
+}
+void set_block_and_meta(uint block_idx, uint block, float humidity, float temperature) {
+    world[block_idx] = get_default_block_meta(block,humidity,temperature);
+}
+void set_block_and_meta_at(uvec3 world_block_pos, uint block, float humidity, float temperature) {
+    set_block_and_meta(block_pos_into_world_idx(world_block_pos),block,humidity,temperature);
+}
+void fill_column_and_meta_to(uvec3 from_world_block_pos, uint to_y, uint block, float humidity, float temperature) {
+    const uint from_idx = block_pos_into_world_idx(from_world_block_pos);
+    const uint to_idx = block_pos_into_world_idx(uvec3(from_world_block_pos.x,to_y,from_world_block_pos.z));
+    for(uint i = from_idx; i<to_idx;i=block_idx_y_plus_1(i)){
+        world[i] = get_default_block_meta(block,humidity,temperature);
+    }
+}
+void fill_column_and_meta(uvec3 from_world_block_pos, uint height, uint block, float humidity, float temperature) {
+    fill_column_and_meta_to(from_world_block_pos,from_world_block_pos.y+height,block,humidity,temperature);
+}
+
+struct RayCastResult{
+    vec3 v;
+    float ratio_of_traversed_length; // traversed_length == length(distance_and_direction) * ratio_of_traversed_length
+    vec3 prev_v;
+    bool found;
+};
+
+
+RayCastResult ray_cast(vec3 start, vec3 distance_and_direction) {
+    //current voxel boundary
+    vec3 v = floor(start);
+    if(!is_air_at( uvec3(v))) {
+        return RayCastResult(v,0,v,true);
+    }
+    //final voxel boundary B
+    vec3 b = start + distance_and_direction;
+    vec3 bv = floor(b);
+    vec3 step = sign(distance_and_direction);
+    vec3 t_max = (max(step, 0) + v - start) / distance_and_direction; //notice that the signs will cancel out and the result will be positive
+    vec3 t_delta = step / distance_and_direction;//notice that the signs will cancel out. Division by zero will yield +inf
+
+    while(v != bv){
+        uint min_dim = min_vec3_component(t_max);
+        vec3 new_v = v;
+        new_v[min_dim] += step[min_dim];
+        if(0 > new_v[min_dim] || new_v[min_dim] >= WORLD_BORDERS[min_dim] || !is_air_at(uvec3(new_v))){
+            return RayCastResult(new_v,t_max[min_dim],v,true);
+        }
+        t_max[min_dim] += t_delta[min_dim];
+        v = new_v;
+    }
+    return RayCastResult(v,1,v,false);
+}
+
+
+#endif //IS_AVAILABLE_BUFFER_WORLD
+
+
+#ifdef IS_AVAILABLE_BUFFER_BONES
+#ifdef IS_AVAILABLE_BUFFER_COLLISION_GRID
+
+uint ray_intersect_any_bone_in_cell(vec3 start, vec3 distance_and_direction, const CollisionCell cell) {
+    for(uint i=0;i<cell.len;i++){
+        const uint bone_idx = cell.contents[i];
+        if(is_ray_intersecting_bone(start,distance_and_direction,bones[bone_idx])){
+            return bone_idx;
+        }
+    }
+    return 0xFFFFFFFF;
+}
+
+uint ray_bone_intersect(vec3 start, vec3 distance_and_direction) {
+    //First we perform linear transformation from the world-space to collision-grid-space
+    start /= BROAD_PHASE_CELL_SIZE;
+    distance_and_direction /= BROAD_PHASE_CELL_SIZE;
+    //current voxel boundary
+    vec3 v = floor(start);
+    uint intersected_bone_idx = ray_intersect_any_bone_in_cell(start,distance_and_direction,collision_grid[broad_phase_cell_pos_to_cell_idx( uvec3(v))]);
+    if(intersected_bone_idx < 0xFFFFFFFF) {
+        return intersected_bone_idx;
+    }
+    //final voxel boundary B
+    vec3 b = start + distance_and_direction;
+    vec3 bv = floor(b);
+    vec3 step = sign(distance_and_direction);
+    vec3 t_max = (max(step, 0) + v - start) / distance_and_direction; //notice that the signs will cancel out and the result will be positive
+    vec3 t_delta = step / distance_and_direction;//notice that the signs will cancel out. Division by zero will yield +inf
+
+    while(v != bv){
+        uint min_dim = min_vec3_component(t_max);
+        vec3 new_v = v;
+        new_v[min_dim] += step[min_dim];
+        intersected_bone_idx = ray_intersect_any_bone_in_cell(start,distance_and_direction,collision_grid[broad_phase_cell_pos_to_cell_idx( uvec3(new_v))]);
+        if(intersected_bone_idx < 0xFFFFFFFF) {
+            return intersected_bone_idx;
+        }
+        v = new_v;
+        t_max[min_dim] += t_delta[min_dim];
+    }
+    return 0xFFFFFFFF;
+}
+
+#endif //IS_AVAILABLE_BUFFER_COLLISION_GRID
+#endif //IS_AVAILABLE_BUFFER_BONES
+
+#ifdef IS_AVAILABLE_BUFFER_INDIRECT
+void set_indirect_dispatch(uint compute_shader_idx, uint invokations_count){
+    dispatch_indirect[compute_shader_idx].x = invokation_count_to_group_count(invokations_count);
+}
+#endif //IS_AVAILABLE_BUFFER_INDIRECT
+
+
+#ifdef IS_AVAILABLE_BUFFER_FACES
+#ifdef IS_AVAILABLE_BUFFER_WORLD
+uint remove_block_faces(const float opacity, uvec3 block_pos){
+    ///////////////////////////////
+    // FIRST WE COLLECT ALL THE NEIGHBOURING THAT USED TO BE COVERED AND WILL NOW BE UNCOVERED
+    ///////////////////////////////
+    uint chunk_x = block_pos.x / CHUNK_WIDTH;
+    uint chunk_z = block_pos.z / CHUNK_DEPTH;
+    uint chunk_idx = chunk_pos_into_chunk_idx(chunk_x,chunk_z);
+    uint[6] orientations = uint[6](
+        ZPlus,
+        XPlus,
+        YPlus,
+        YMinus,
+        XMinus,
+        ZMinus
+    );
+    uvec3[6] neighbour_block_pos = uvec3[6](
+        block_pos-uvec3(0,0,1),
+        block_pos-uvec3(1,0,0),
+        block_pos-uvec3(0,1,0),
+        block_pos+uvec3(0,1,0),
+        block_pos+uvec3(1,0,0),
+        block_pos+uvec3(0,0,1)
+    );
+    bool[6] has_neighbour = bool[6](
+        block_pos.z>0,
+        block_pos.x>0,
+        block_pos.y>0,
+        block_pos.y+1<CHUNK_HEIGHT,
+        block_pos.x+1<WORLD_WIDTH,
+        block_pos.z+1<WORLD_DEPTH
+    );
+    uint[6] neighbour_block_ids;
+    float[6] neighbour_opacity;
+    block_pos.x -= chunk_x * CHUNK_WIDTH;
+    block_pos.z -= chunk_z * CHUNK_DEPTH;
+    uint number_of_opaque_blocks = 0;
+    for(int i=0;i<6;i++){
+        neighbour_block_ids[i] = has_neighbour[i] ? get_block_id_at(neighbour_block_pos[i]) : 0;
+        neighbour_opacity[i] = has_neighbour[i] ? BLOCK_OPACITY[neighbour_block_ids[i]] : 0;
+        if(neighbour_opacity[i] <= opacity && neighbour_block_ids[i] >= NO_OF_TRANSPARENT_BLOCKS) {
+            number_of_opaque_blocks++;
+        }
+    }
+    int[6] permutation = int[6](0,1,2,3,4,5); //these guys are sorted is such a way that iterating them will visit chunks in increasing chunk_idx order
+    if(block_pos.z>0){
+        permutation[1] = 0; // block_pos-uvec3(0,0,1)
+        permutation[0] = 1; // block_pos-uvec3(1,0,0)
+    }
+    if(block_pos.z<15){
+        permutation[4] = 5; // block_pos+uvec3(0,0,1)
+        permutation[5] = 4; // block_pos+uvec3(1,0,0)
+    }
+    uvec3[7] faces_to_insert;
+    uint[2] faces_to_insert_len = uint[](/*opaque index*/1,/*transparent index*/number_of_opaque_blocks+1);
+    //    debugPrintfEXT("%d#%d",faces[0].x,faces[1].x);
+    for(int j=0;j<6;j++){
+        int i = permutation[j];
+        uint neighbour = neighbour_block_ids[i];
+        if(0 < neighbour && neighbour_opacity[i] <= opacity){
+
+            uint orientation = orientations[i];
+            uint chunk_x = neighbour_block_pos[i].x / CHUNK_WIDTH;
+            uint chunk_z = neighbour_block_pos[i].z / CHUNK_DEPTH;
+            neighbour_block_pos[i].x -= chunk_x * CHUNK_WIDTH;
+            neighbour_block_pos[i].z -= chunk_z * CHUNK_DEPTH;
+
+            uvec2 face_to_insert = new_face(neighbour_block_pos[i], orientation, chunk_x, chunk_z, BLOCK_TEXTURE_IDS[neighbour][orientation]);
+            uint is_transparent = uint(neighbour < NO_OF_TRANSPARENT_BLOCKS);
+            uint chunk_idx = chunk_pos_into_chunk_idx(chunk_x,chunk_z) + is_transparent*TOTAL_CHUNKS;
+            faces_to_insert[faces_to_insert_len[is_transparent]++] = uvec3(face_to_insert,chunk_idx);
+        }
+    }
+    faces_to_insert[0].z = 0xFFFFFFFFu; //Every cube has 6 faces. We use array of length 7, to ensure that array overflow never occurs.
+    // The 0xFFFFFFFFu value has analogical purpose to the 0 in null terminated strings in C.
+
+    uint face_offset = TOTAL_CHUNKS*2;
+    ///////////////////////////////
+    // THIS SECTION REMOVES FACES OF THE BLOCK THAT HAS BEEN REMOVED
+    ///////////////////////////////
+    int i=0;
+    bool was_transparent = opacity < 1.0;
+    for(;i<chunk_idx+(was_transparent?TOTAL_CHUNKS:0);i++){
+        face_offset += faces[i].x;
+    }
+    uint length = faces[i].x;
+    uint searched_face_coords = block_pos_relative_to_chunk_and_orientation_into_face_coords(uvec4(block_pos,XPlus));
+    uint number_of_removed_faces = 0;
+    for(uint face_idx=face_offset;face_idx < face_offset+length-number_of_removed_faces;face_idx++){
+        while(face_coords_have_the_same_pos(faces[face_idx].x,searched_face_coords) && face_idx < face_offset+length-number_of_removed_faces){
+            number_of_removed_faces += 1;
+            faces[face_idx] = faces[face_offset+length-number_of_removed_faces];
+
+        }
+    }
+    faces[i].x = length-number_of_removed_faces;
+    face_offset += length;
+    for(i+=1;i<TOTAL_CHUNKS*2;i++){
+        length = faces[i].x;
+        for(int j=0;j<number_of_removed_faces;){
+            j++;
+            faces[face_offset-j] = faces[face_offset+length-j];
+        }
+        face_offset += length;
+    }
+    face_offset-=number_of_removed_faces;// now this offset point to the end of face buffer
+    ///////////////////////////////
+    // THIS SECTION ADDS FACES OF NEIGHBOURS THAT WERE PREVIOUSLY HIDDEN AND ARE NOW BEING UNCOVERERD
+    ///////////////////////////////
+    uint faces_to_insert_idx = faces_to_insert_len[1]-1;
+    uint final_face_count = face_offset + faces_to_insert_idx - TOTAL_CHUNKS*2;
+    int total_number_of_inserted_faces = 0;
+    i=2*int(TOTAL_CHUNKS)-1;
+    for(;i>=0;i--){
+        int length = int(faces[i].x);
+        uint inserted_faces = 0;
+        while (i==faces_to_insert[faces_to_insert_idx].z) {
+            uvec2 new_face = faces_to_insert[faces_to_insert_idx].xy;
+            faces_to_insert_idx--;
+            faces[face_offset+faces_to_insert_idx] = new_face;
+            inserted_faces++;
+        }
+        for(uint j=0;j<faces_to_insert_idx;j++){
+            faces[face_offset+j] = faces[face_offset-length+j];
+        }
+        faces[i].x = length + inserted_faces;
+        face_offset-=length;
+    }
+    return final_face_count;
+}
+
+uint add_block_faces(uvec3 block_pos,const uint block_id){
+    bool is_transparent = block_id < NO_OF_TRANSPARENT_BLOCKS;
+    const float opacity = BLOCK_OPACITY[block_id];
+    uint chunk_x = block_pos.x / CHUNK_WIDTH;
+    uint chunk_z = block_pos.z / CHUNK_DEPTH;
+    uint chunk_idx = chunk_pos_into_chunk_idx(chunk_x,chunk_z);
+    uint[6] orientations = uint[6](
+        ZMinus,
+        XMinus,
+        YMinus,
+        YPlus,
+        XPlus,
+        ZPlus
+    );
+    uvec3[6] neighbour_block_pos = uvec3[6](
+        block_pos-uvec3(0,0,1),
+        block_pos-uvec3(1,0,0),
+        block_pos-uvec3(0,1,0),
+        block_pos+uvec3(0,1,0),
+        block_pos+uvec3(1,0,0),
+        block_pos+uvec3(0,0,1)
+    );
+
+    bool[6] has_neighbour = bool[6](
+        block_pos.z>0,
+        block_pos.x>0,
+        block_pos.y>0,
+        block_pos.y+1<CHUNK_HEIGHT,
+        block_pos.x+1<WORLD_WIDTH,
+        block_pos.z+1<WORLD_DEPTH
+    );
+    block_pos.x -= chunk_x * CHUNK_WIDTH;
+    block_pos.z -= chunk_z * CHUNK_DEPTH;
+
+    float[6] neighbour_block_opacities;
+    uint[6] neighbour_block_ids;
+    uint opaque_neighbours = 0;
+    for(int neighbour=0;neighbour<6;neighbour++){
+        if(has_neighbour[neighbour]){
+            uvec3 neighbour_pos = neighbour_block_pos[neighbour];
+            neighbour_block_ids[neighbour] = get_block_id_at(neighbour_pos);
+            neighbour_block_opacities[neighbour] = BLOCK_OPACITY[neighbour_block_ids[neighbour]];
+            if( neighbour_block_opacities[neighbour] <= opacity && neighbour_block_ids[neighbour]>0 && neighbour_block_opacities[neighbour] == 1){
+                opaque_neighbours++;
+            }
+        }
+    }
+    int[6] permutation = int[6](0,1,2,3,4,5); //these guys are sorted is such a way that iterating them will visit chunks in increasing chunk_idx order
+    if(block_pos.z>0){
+        permutation[1] = 0; // block_pos-uvec3(0,0,1)
+        permutation[0] = 1; // block_pos-uvec3(1,0,0)
+    }
+    if(block_pos.z<15){
+        permutation[4] = 5; // block_pos+uvec3(0,0,1)
+        permutation[5] = 4; // block_pos+uvec3(1,0,0)
+    }
+    Face[6] faces_to_insert;
+    uint faces_to_insert_len=0;
+    uvec2[7] faces_to_remove;//first element are face coords. Second element is the face chunk index
+    uint[2] faces_to_remove_len=uint[2](0,opaque_neighbours);
+    for(int j=0;j<6;j++){
+        int neighbour = permutation[j];
+        if(has_neighbour[neighbour]){
+            uvec3 neighbour_pos = neighbour_block_pos[neighbour];
+            uint neighbour_block_id = neighbour_block_ids[neighbour];
+            float neighbour_opacity = neighbour_block_opacities[neighbour];
+            uint orientation = orientations[neighbour];
+            if(neighbour_opacity < opacity){
+                Face f = new_face(block_pos,orientation,chunk_x,chunk_z,BLOCK_TEXTURE_IDS[block_id][orientation]);
+                faces_to_insert[faces_to_insert_len++] = f;
+            }
+            if( neighbour_opacity <= opacity && neighbour_block_id>0 ){
+                uint neighbour_chunk_x = neighbour_pos.x / CHUNK_WIDTH;
+                uint neighbour_chunk_z = neighbour_pos.z / CHUNK_DEPTH;
+                neighbour_pos.x -= neighbour_chunk_x * CHUNK_WIDTH;
+                neighbour_pos.z -= neighbour_chunk_z * CHUNK_DEPTH;
+                uint opposite = opposite_orientation(orientation);
+                uint face_coords = block_pos_relative_to_chunk_and_orientation_into_face_coords(uvec4(neighbour_pos,opposite));
+                uint is_transparent = uint(neighbour_opacity<1);
+                uint neighbour_chunk_idx = chunk_pos_into_chunk_idx(neighbour_chunk_x,neighbour_chunk_z) + is_transparent*TOTAL_CHUNKS;
+                faces_to_remove[faces_to_remove_len[is_transparent]++] = uvec2(face_coords,neighbour_chunk_idx);
+            }
+        }
+    }
+    faces_to_remove[faces_to_remove_len[1]].y = 0xFFFFFFFFu;
+
+
+    uint face_offset = TOTAL_CHUNKS*2;
+    uint i=0;
+    uint chunk_faces_idx = chunk_idx + (is_transparent?TOTAL_CHUNKS:0);
+    int faces_to_remove_idx = 0;
+    for(;i<2*TOTAL_CHUNKS;i++){
+        uint length = faces[i].x;
+
+        for(uint j=0;j<faces_to_remove_idx;){
+            j++;
+            faces[face_offset-j] = faces[face_offset+length-j];
+        }
+        uint removed_faces = 0;
+        uint from = face_offset-faces_to_remove_idx;
+        while (i==faces_to_remove[faces_to_remove_idx].y) {
+            uint coords = faces_to_remove[faces_to_remove_idx].x;
+            for(uint j=from;j<from+length-removed_faces;j++){
+                if(faces[j].x == coords){
+                    removed_faces++;
+                    faces[j] = faces[from+length-removed_faces];
+                    break;
+                }
+            }
+            faces_to_remove_idx++;
+        }
+        faces[i].x = length - removed_faces ;
+        face_offset += length;
+    }
+    face_offset -= faces_to_remove_idx;
+    const uint total_faces = face_offset - TOTAL_CHUNKS*2;
+    for(int i=int(TOTAL_CHUNKS)*2-1;i>chunk_faces_idx;i--){
+        uint length = faces[i].x;
+        for(int j=0;j<faces_to_insert_len;j++){
+            faces[face_offset+j] = faces[face_offset-length+j];
+        }
+        face_offset -= length;
+    }
+    for(int j=0;j<faces_to_insert_len;j++){
+        faces[face_offset + j] = faces_to_insert[j];
+    }
+    faces[chunk_faces_idx].x += faces_to_insert_len;
+    return total_faces + faces_to_insert_len;
+}
+#endif // IS_AVAILABLE_BUFFER_WORLD
+#endif // IS_AVAILABLE_BUFFER_FACES
+
+
+#ifdef IS_AVAILABLE_BUFFER_FACES
+Face get_face_at(uint face_idx){
+    return faces[TOTAL_CHUNKS*2+face_idx];
+}
+uint get_chunk_face_count_at(uint chunk_offset){
+    return faces[chunk_offset].x;
+}
+void set_chunk_face_count_at(uint chunk_offset, uint face_count){
+    faces[chunk_offset].x = face_count;
+}
+uint atomic_add_chunk_face_count_at(uint chunk_offset, uint face_count){
+    return atomicAdd(faces[chunk_offset].x, face_count);
+}
+#endif // IS_AVAILABLE_BUFFER_FACES
+
+
+#ifdef IS_AVAILABLE_BUFFER_TMP_FACES_COPY
+uint offset_of_face_copy_face_count(uint chunk_offset){
+    return 3*chunk_offset;
+}
+uint get_inserted_face_count(uint chunk_offset){
+    return tmp_faces_copy[offset_of_face_copy_face_count(chunk_offset)];
+}
+uint atomic_increment_inserted_face_count(uint chunk_offset){
+    return atomicAdd(tmp_faces_copy[offset_of_face_copy_face_count(chunk_offset)],1);
+}
+void set_inserted_face_count(uint chunk_offset, uint face_count){
+    tmp_faces_copy[offset_of_face_copy_face_count(chunk_offset)] = face_count;
+}
+uint get_removed_face_count(uint chunk_offset){
+    return tmp_faces_copy[offset_of_face_copy_face_count(chunk_offset)+1];
+}
+uint atomic_increment_removed_face_count(uint chunk_offset){
+    return atomicAdd(tmp_faces_copy[offset_of_face_copy_face_count(chunk_offset)+1],1);
+}
+void set_removed_face_count(uint chunk_offset, uint face_count){
+    tmp_faces_copy[offset_of_face_copy_face_count(chunk_offset)+1] = face_count;
+}
+uint get_copied_face_count(uint chunk_offset){
+    return tmp_faces_copy[offset_of_face_copy_face_count(chunk_offset)+2];
+}
+void set_copied_face_count(uint chunk_offset,uint copied_faces){
+    tmp_faces_copy[offset_of_face_copy_face_count(chunk_offset)+2] = copied_faces;
+}
+uint offset_of_face_copy_chunk_offset(uint chunk_offset){
+    return offset_of_face_copy_face_count(2*TOTAL_CHUNKS) + 2*chunk_offset;
+}
+uint get_new_faces_beginning_offset(uint chunk_offset){
+    return tmp_faces_copy[offset_of_face_copy_chunk_offset(chunk_offset)];
+}
+uint get_original_faces_beginning_offset(uint chunk_offset){
+    return tmp_faces_copy[offset_of_face_copy_chunk_offset(chunk_offset) + 1];
+}
+uint get_new_faces_ending_offset(uint chunk_offset){
+    return get_new_faces_beginning_offset(chunk_offset+1);
+}
+uint get_original_faces_ending_offset(uint chunk_offset){
+    return get_original_faces_beginning_offset(chunk_offset+1);
+}
+void set_faces_ending_offset(uint chunk_offset, uvec2 new_and_original_faces_ending_offset){
+    uint offset = offset_of_face_copy_chunk_offset(chunk_offset + 1); // notice this +1
+    //It leaves one zeroed-out cell at the very beginning (tmp_faces_copy initialized with zeros at the beginning
+    // and the update_ambience_prepare_face_offsets.comp never mutates that value, so it stays zero).
+    // Hence by querying get_new_faces_beginning_offset(0) we will always get zero.
+    // Same goes for get_original_faces_beginning_offset(0)
+    tmp_faces_copy[offset] = new_and_original_faces_ending_offset.x;
+    tmp_faces_copy[offset + 1] = new_and_original_faces_ending_offset.y;
+}
+
+uint offset_of_face_copy(uint face_idx){
+    return offset_of_face_copy_chunk_offset(2*TOTAL_CHUNKS+1) + 3*face_idx;
+}
+uint get_face_copy_destination(uint face_idx){
+    return tmp_faces_copy[offset_of_face_copy(face_idx)];
+}
+void set_face_copy_destination(uint face_idx, uint dst_offset){
+    tmp_faces_copy[offset_of_face_copy(face_idx)] = dst_offset;
+}
+void set_face_copy(uint face_idx, uvec2 face){
+    tmp_faces_copy[offset_of_face_copy(face_idx) + 1] = face.x;
+    tmp_faces_copy[offset_of_face_copy(face_idx) + 2] = face.y;
+}
+uvec2 get_face_copy(uint face_idx){
+    uint face_coords = tmp_faces_copy[offset_of_face_copy(face_idx) + 1];
+    uint tex_id = tmp_faces_copy[offset_of_face_copy(face_idx) + 2];
+    return uvec2(face_coords, tex_id);
+}
+#endif // IS_AVAILABLE_BUFFER_TMP_FACES_COPY
+
+#ifdef IS_AVAILABLE_BUFFER_RAND_UINT
+
+float rand_float(uint index){
+    return rand_uint_to_random_float(rand_uint[index]);
+}
+/**Random float in range (-1,1)*/
+float rand_float_neg_pos(uint index){
+    return rand_float(index)*2.-1.;
+}
+uvec2 rand_uvec2(uint index){
+    const uint rand_uint_offset = index*2;
+    const uvec2 rand_uint_offsets = uvec2(rand_uint_offset, rand_uint_offset+1) % MAX_RAND_UINT;
+    return uvec2(rand_uint[rand_uint_offsets.x], rand_uint[rand_uint_offsets.y]);
+}
+vec2 rand_vec2(uint index){
+    return rand_uvec2_to_random_vec2(rand_uvec2(index));
+}
+uvec2 rand_vec2_world_pos(uint index){
+    return rand_uvec2(index) % WORLD_BORDERS.xz;
+}
+uvec3 rand_uvec3(uint index){
+    const uint rand_uint_offset = index*4;
+    const uvec3 rand_uint_offsets = uvec3(rand_uint_offset, rand_uint_offset+1, rand_uint_offset+2) % MAX_RAND_UINT;
+    return uvec3(rand_uint[rand_uint_offsets.x], rand_uint[rand_uint_offsets.y], rand_uint[rand_uint_offsets.z]);
+}
+vec3 rand_vec3(uint index){
+    return rand_uvec3_to_random_vec3(rand_uvec3(index));
+}
+#endif // IS_AVAILABLE_BUFFER_RAND_UINT
+
+#endif // UTILS_COMP
+

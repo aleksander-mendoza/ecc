@@ -1,0 +1,29 @@
+#version 450
+#extension GL_GOOGLE_include_directive : enable
+#extension GL_KHR_shader_subgroup_basic : enable
+#define IS_AVAILABLE_BUFFER_FACES
+#define IS_AVAILABLE_BUFFER_TMP_FACES_COPY
+#define IS_AVAILABLE_BUFFER_INDIRECT
+//#extension GL_EXT_debug_printf : enable
+#include "descriptors_ambience.comp"
+layout (local_size_x_id = GROUP_SIZE_CONST_ID) in;
+#include "utils.comp"
+const uint LAST_CHUNK_OFFSET = 2*TOTAL_CHUNKS-1;
+void main() {
+    const uint chunk_offset = gl_WorkGroupID.x;
+    const uint lID = gl_LocalInvocationID.x;
+    const uint copied_face_count = get_copied_face_count(chunk_offset);
+    const uint new_faces_beginning_offset = get_new_faces_beginning_offset(chunk_offset);
+    const uint tmp_faces_copy_chunk_offset = offset_of_face_copy(new_faces_beginning_offset);
+    for(uint i=lID; i < copied_face_count;i+=GROUP_SIZE){
+        uint face_copy_offset = tmp_faces_copy_chunk_offset+3*i;
+        uint dst_offset = tmp_faces_copy[face_copy_offset];
+        uint face_coords = tmp_faces_copy[face_copy_offset+1];
+        uint tex_id = tmp_faces_copy[face_copy_offset+2];
+        faces[2*TOTAL_CHUNKS + dst_offset] = uvec2(face_coords,tex_id);
+    }
+    if(LAST_CHUNK_OFFSET==chunk_offset && lID==0){
+        draw_indirect[DRAW_INDIRECT_FACES].instance_count = get_new_faces_ending_offset(chunk_offset);
+//        debugPrintfEXT("E%d",get_new_faces_ending_offset(chunk_offset));
+    }
+}
