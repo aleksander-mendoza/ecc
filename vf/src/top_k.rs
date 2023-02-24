@@ -1,3 +1,4 @@
+use std::cmp::Ordering;
 use std::cmp::Ordering::{Greater, Less};
 
 pub fn top_small_k_indices<V: Copy + PartialOrd>(mut k: usize, n: usize, f: impl Fn(usize) -> V) -> Vec<(usize, V)> {
@@ -95,4 +96,9 @@ mod tests {
             assert_eq!(top_idx, arr.len() - 1 - arr.iter().rev().position_max().unwrap());
         }
     }
+}
+pub fn argsort<T>(data: &[T], compare:impl Fn(&T,&T)->Ordering) -> Vec<usize> {
+    let mut indices = (0..data.len()).collect::<Vec<_>>();
+    indices.sort_by(|&i,&j| compare(&data[i],&data[j]));
+    indices
 }

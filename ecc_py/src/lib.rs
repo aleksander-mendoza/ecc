@@ -3,7 +3,7 @@
 
 mod slice_box;
 mod util;
-
+use rand_distr::Distribution;
 use std::ops::Range;
 use std::str::FromStr;
 use numpy::{IntoPyArray, PyArray1, PyArray2, PyArray3, PyArray4, PyArray6, PyArrayDyn};
@@ -13,11 +13,13 @@ use pyo3::exceptions::PyValueError;
 use pyo3::PyResult;
 use pyo3::types::PyList;
 use rand::Rng;
+use render::failure::err_msg;
 use vf::soft_wta::*;
 use vf::{ArrayCast, conv, VecCast, VectorField, VectorFieldDivAssign, VectorFieldMul, VectorFieldMulAssign, VectorFieldOne, VectorFieldZero};
 use vf::{arr2, arr3, slice_as_arr, tup2, tup3, tup4, tup6};
 use vf::dynamic_layout::shape;
 use vf::init::InitEmptyWithCapacity;
+use vf::top_k::argsort;
 use crate::util::{arrX, py_any_as_numpy};
 
 
@@ -608,6 +610,27 @@ pub fn sample(probabilities:&PyArrayDyn<f32>)->PyResult<&PyArrayDyn<bool>>{
     Ok(d)
 }
 #[pyfunction]
+#[text_signature = "(probabilities, cardinality, std_dev)"]
+/// Returns a sparse boolean tensor of specified cardinality (number of ones) such that the top values get assigned 1.
+/// Optionally (if std_dev is provided) the values can be treated as means of gaussian distributions with the provided standard deviation.
+pub fn sample_of_cardinality(values:&PyArrayDyn<f32>, cardinality:usize, std_dev:Option<f32>)->PyResult<&PyArrayDyn<bool>>{
+    let p = unsafe{values.as_slice()?};
+    let sorted_indices = if let Some(std_dev) = std_dev{
+        let mut rng = rand::thread_rng();
+        let mut dist = rand_distr::Normal::new(0f32,std_dev).map_err(|e|PyValueError::new_err(format!("{}", e)))?;
+        let tmp:Vec<f32> = p.iter().map(|v|v+dist.sample(&mut rng)).collect();
+        argsort(&tmp,f32::total_cmp)
+    }else{
+        argsort(p,f32::total_cmp)
+    };
+    let mut d = PyArrayDyn::zeros(values.py(), values.dims(), false);
+    let d_buff = unsafe{d.as_slice_mut()}.unwrap();
+    for &i in sorted_indices.iter().take(cardinality){
+        d_buff[i] = true;
+    }
+    Ok(d)
+}
+#[pyfunction]
 #[text_signature = "(collector, n, from_inclusive, to_exclusive)"]
 /// Returns a vector containing indices of all true boolean values
 pub fn rand_set(py:Python, cardinality: usize, from_inclusive: usize, to_exclusive:usize)-> PyObject{
@@ -667,8 +690,14 @@ pub fn match_precomputed_histogram<'py>(source: &'py PyArray3<u8>, reference_his
     let v = PyArray1::from_vec(source.py(),out.to_vec());
     v.reshape(src_shape)
 }
-
-
+#[pyfunction]
+#[text_signature = "(histogram)"]
+/// `histogram` shape `[channels, 256]`
+pub fn histogram_interpolate_gaps(histogram: &PyArray1<f32>)->PyResult<()>{
+    let hist = unsafe{histogram.as_slice_mut()?};
+    vf::histogram::interpolate_gaps(hist);
+    Ok(())
+}
 #[pyfunction]
 #[text_signature = "(source_image, source_mask)"]
 /// `source_image` shape `[height, width, channels]`
@@ -902,6 +931,22 @@ pub fn learn_uw<'py>(state_space: &'py PyArray2<usize>, w: &'py PyArray2<f32>) -
 }
 
 
+#[pyfunction]
+#[text_signature = "(boolean_matrix)"]
+pub fn mat_to_rle(bools: &PyArrayDyn<bool>) -> PyResult<&PyArray1<usize>> {
+    let b = unsafe{bools.as_slice()}?;
+    let v:Vec<usize> = vf::mat_to_rle(b);
+    Ok(PyArray1::from_vec(bools.py(),v))
+}
+#[pyfunction]
+#[text_signature = "(rle, shape)"]
+pub fn rle_to_mat(rle:&PyArray1<usize>, shape:Vec<usize>)-> PyResult<&PyArrayDyn<bool>> {
+    let b = unsafe{rle.as_slice()}?;
+    let mut v = Vec::empty(shape.product());
+    vf::rle_to_mat(b,&mut v);
+    let v = PyArray1::from_vec(rle.py(),v);
+    v.reshape(shape)
+}
 
 #[pymodule]
 fn histogram(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
@@ -913,9 +958,11 @@ fn histogram(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(normalize_histogram, m)?)?;
     m.add_function(wrap_pyfunction!(image_histogram, m)?)?;
     m.add_function(wrap_pyfunction!(match_precomputed_histogram, m)?)?;
+    m.add_function(wrap_pyfunction!(histogram_interpolate_gaps, m)?)?;
 
     Ok(())
 }
+
 
 /// A Python module implemented in Rust. The name of this function must match
 /// the `lib.name` setting in the `Cargo.toml`, else Python will not be able to
@@ -956,6 +1003,9 @@ fn ecc_py(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(cyclic_monoid, m)?)?;
     m.add_function(wrap_pyfunction!(direct_product, m)?)?;
     m.add_function(wrap_pyfunction!(learn_uw, m)?)?;
+    m.add_function(wrap_pyfunction!(sample_of_cardinality, m)?)?;
+    m.add_function(wrap_pyfunction!(rle_to_mat, m)?)?;
+    m.add_function(wrap_pyfunction!(mat_to_rle, m)?)?;
     Ok(())
 }
 

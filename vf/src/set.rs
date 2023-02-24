@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use std::fmt::Debug;
 use std::hash::Hash;
 use std::iter::Step;
-use num_traits::{AsPrimitive, NumAssignOps, PrimInt, Zero};
+use num_traits::{AsPrimitive, NumAssignOps, One, PrimInt, Zero};
 use std::ops::{Add, AddAssign, Range, Rem, Sub};
 use rand::distributions::{Distribution, Standard};
 use crate::from_usize::FromUsize;
@@ -300,10 +300,41 @@ pub fn dense_to_sparse<Idx: FromUsize>(bools: &[bool]) -> Vec<Idx> {
     v
 }
 
+pub fn mat_to_rle<Idx: Zero+AddAssign+One+Copy>(bools: &[bool]) -> Vec<Idx> {
+    let mut v = Vec::<Idx>::new();
+    let mut prev = false;
+    let mut running_length = Idx::zero();
+    for &b in bools{
+        if b == prev{
+            running_length += Idx::one()
+        }else{
+            v.push(running_length);
+            prev = b;
+            running_length = Idx::one();
+        }
+    }
+    v.push(running_length);
+    v
+}
+
+pub fn rle_to_mat<Idx: AsPrimitive<usize>>(rle:&[Idx], bools: &mut [bool]){
+    let mut value = false;
+    let mut offset = 0;
+    for &running_length in rle{
+        let end = offset+running_length.as_();
+        bools[offset..end].fill(value);
+        value = !value;
+        offset = end;
+    }
+    assert_eq!(offset,bools.len(),"RLE counts do not match shape of the boolean tensor")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use rand::SeedableRng;
+    use crate::init::InitEmptyWithCapacity;
+    use crate::init_rand::InitRandWithCapacity;
 
 
     #[test]
@@ -391,5 +422,14 @@ mod tests {
         assert_eq!(subtract(&[1, 5, 6, 76], &[53, 746, 6, 1]).as_slice(), &[5, 76]);
         assert_eq!(subtract(&[1, 5, 6, 76], &[53, 746, 6, 1, 5, 78, 3, 6, 7]).as_slice(), &[76]);
         Ok(())
+    }
+
+    #[test]
+    fn test8() {
+        let mat = Vec::<bool>::rand(265);
+        let rle:Vec<usize> = mat_to_rle(&mat);
+        let mut mat2 = Vec::empty(mat.len());
+        rle_to_mat(&rle, &mut mat2);
+        assert_eq!(&mat,&mat2);
     }
 }

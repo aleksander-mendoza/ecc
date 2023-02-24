@@ -1,12 +1,77 @@
 use std::ops::{Add, Div, Mul, Range, Sub};
-use num_traits::Zero;
+use num_traits::{Num, Zero};
 use crate::*;
 use crate::from_usize::FromUsize;
 
 
-pub fn histogram(image: &[u8], stride: usize, source_mask:impl Fn(usize)->bool) -> Box<[u32; 256]> {
-    let mut slice = Box::new([0;256]);
-    for (idx,pixel) in image.iter().step_by(stride).cloned().enumerate() {
+pub fn interpolate_gaps(histogram: &mut [f32]) {
+    assert_eq!(histogram.len() % 256, 0);
+    let mut offset = 0;
+
+    while offset < histogram.len() {
+        let mut prev_non_zero = 0.;
+        let mut i = 0;
+        while i < 256 {
+            debug_assert!(i < 256);
+            debug_assert!((i>0 && histogram[i - 1] == prev_non_zero) || (i == 0 && prev_non_zero == 0.));
+            let hist_i = histogram[offset + i];
+            if hist_i == 0. {
+                let mut j = i;
+                debug_assert_eq!(histogram[offset + i], hist_i);
+                debug_assert_eq!(hist_i, 0.);
+                debug_assert!(j < 256);
+                let mut hist_j = 0.;
+                while j < 256 {
+                    hist_j = histogram[offset + j];
+                    if hist_j == 0. {
+                        j += 1;
+                    } else {
+                        debug_assert_eq!(histogram[offset + j], hist_j);
+                        debug_assert_ne!(hist_j, 0.);
+                        break;
+                    }
+                }
+                debug_assert!((histogram[offset + j] == hist_j && hist_j != 0.) || (hist_j == 0. && j == 256));
+                debug_assert!(j >= i);
+                let delta_x = (j+1-i) as f32;
+                debug_assert!((i>0 && histogram[offset + i - 1] == prev_non_zero) || (i == 0 && prev_non_zero == 0.));
+                let delta_y = hist_j - prev_non_zero;
+                let b = delta_y / delta_x;
+                for k in i..j {
+                    // i =< k < j
+                    // i-1 < k < j
+                    // i-1 - k < 0 < j - k
+                    // 0 < k - i+1
+                    // 0 < k - i+1 < delta_x
+                    // prev_non_zero < prev_non_zero + (k - i+1)*b < prev_non_zero + delta_x*b == prev_non_zero + delta_y == hist_j
+                    debug_assert!(if b >= 0. {prev_non_zero + (k+1 - i) as f32 *b < hist_j} else{hist_j < prev_non_zero + (k+1 - i) as f32 *b});
+                    debug_assert!(if b >= 0. {prev_non_zero < prev_non_zero + (k - i+1) as f32 *b}else{prev_non_zero + (k - i+1) as f32 *b < prev_non_zero});
+                    // by induction: prev_non_zero != 0 or (i == 0 and prev_non_zero == 0)
+                    histogram[offset+k] = prev_non_zero + (k - i + 1) as f32 * b;
+                    debug_assert!(if b >=0. {prev_non_zero < histogram[offset+k]}else{histogram[offset+k] < prev_non_zero});
+                    debug_assert!(if b >= 0. {histogram[offset+k] < hist_j}else{hist_j < histogram[offset+k]});
+                }
+                i = j + 1;
+                debug_assert_ne!(histogram[offset+i-1],0.);
+                debug_assert_ne!(hist_j, 0.);
+                prev_non_zero = hist_j ;
+
+            }else{
+                i += 1;
+                debug_assert_ne!(histogram[offset+i-1], 0.);
+                debug_assert_eq!(hist_i, histogram[offset+i-1]);
+                prev_non_zero = hist_i;
+            }
+        }
+        debug_assert_eq!(i,256);
+        offset = i;
+    }
+}
+
+
+pub fn histogram(image: &[u8], stride: usize, source_mask: impl Fn(usize) -> bool) -> Box<[u32; 256]> {
+    let mut slice = Box::new([0; 256]);
+    for (idx, pixel) in image.iter().step_by(stride).cloned().enumerate() {
         if source_mask(idx) {
             slice[pixel as usize] += 1
         }
@@ -15,8 +80,8 @@ pub fn histogram(image: &[u8], stride: usize, source_mask:impl Fn(usize)->bool) 
 }
 
 /**`image` shape is `[height,width,channels]`*/
-pub fn histograms(image: &[u8], channels: usize, source_mask:impl Fn(usize)->bool) -> Box<[[u32; 256]]> {
-    let mut slice = vec![[0u32; 256];channels];
+pub fn histograms(image: &[u8], channels: usize, source_mask: impl Fn(usize) -> bool) -> Box<[[u32; 256]]> {
+    let mut slice = vec![[0u32; 256]; channels];
     for channel in 0..channels {
         let subslice = &mut slice[channel];
         for (idx, pixel) in image[channel..].iter().step_by(channels).cloned().enumerate() {
@@ -30,7 +95,7 @@ pub fn histograms(image: &[u8], channels: usize, source_mask:impl Fn(usize)->boo
 
 pub fn _normalize_histogram(histogram: Box<[u32; 256]>) -> Box<[f32; 256]> {
     let sum_inv = 1. / histogram.iter().sum::<u32>() as f32;
-    _map_boxed_arr(histogram,|a| a as f32 * sum_inv)
+    _map_boxed_arr(histogram, |a| a as f32 * sum_inv)
 }
 
 pub fn normalize_histogram(histogram: &[u32; 256]) -> Box<[f32; 256]> {
@@ -55,33 +120,33 @@ pub fn normalize_histograms(histograms: &[u32]) -> Box<[f32]> {
         let offset = channel * 256;
         let sum_inv = 1. / histograms[offset..offset + 256].iter().sum::<u32>() as f32;
         for i in offset..offset + 256 {
-            debug_assert_eq!(o.len(),i);
+            debug_assert_eq!(o.len(), i);
             o.push(histograms[i] as f32 * sum_inv);
         }
     }
     o.into_boxed_slice()
 }
 
-pub fn match_histogram(source: &[u8], src_stride: usize, reference: &[u8], ref_stride: usize, source_mask:impl Fn(usize)->bool) -> Vec<u8> {
+pub fn match_histogram(source: &[u8], src_stride: usize, reference: &[u8], ref_stride: usize, source_mask: impl Fn(usize) -> bool) -> Vec<u8> {
     let mut o = Vec::with_capacity(source.len());
-    unsafe{o.set_len(o.capacity())}
+    unsafe { o.set_len(o.capacity()) }
     match_histogram_(source, src_stride, reference, ref_stride, &mut o, src_stride, source_mask);
     o
 }
 
-pub fn match_histogram_(source: &[u8], src_stride: usize, reference: &[u8], ref_stride: usize, output: &mut [u8], out_stride: usize, source_mask:impl Fn(usize)->bool) {
+pub fn match_histogram_(source: &[u8], src_stride: usize, reference: &[u8], ref_stride: usize, output: &mut [u8], out_stride: usize, source_mask: impl Fn(usize) -> bool) {
     let hist_ref = _normalize_histogram(histogram(reference, ref_stride, &source_mask));
     match_precomputed_histogram_(source, src_stride, hist_ref.as_slice(), output, out_stride, source_mask)
 }
 
-pub fn match_precomputed_histogram(source: &[u8], src_stride: usize, hist_ref: &[f32], source_mask:impl Fn(usize)->bool) -> Vec<u8> {
+pub fn match_precomputed_histogram(source: &[u8], src_stride: usize, hist_ref: &[f32], source_mask: impl Fn(usize) -> bool) -> Vec<u8> {
     let mut o = Vec::with_capacity(source.len());
-    unsafe{o.set_len(o.capacity())}
+    unsafe { o.set_len(o.capacity()) }
     match_precomputed_histogram_(source, src_stride, hist_ref, &mut o, src_stride, source_mask);
     o
 }
 
-pub fn match_precomputed_histogram_(source: &[u8], src_stride: usize, hist_ref: &[f32], output: &mut [u8], out_stride: usize, source_mask:impl Fn(usize)->bool) {
+pub fn match_precomputed_histogram_(source: &[u8], src_stride: usize, hist_ref: &[f32], output: &mut [u8], out_stride: usize, source_mask: impl Fn(usize) -> bool) {
     let hist_src = histogram(source, src_stride, &source_mask);
     match_2precomputed_histogram_(source, src_stride, hist_src.as_slice(), &hist_ref, output, out_stride, source_mask)
 }
@@ -93,11 +158,11 @@ hist_src.iter().sum()==source.iter().step_by(src_stride).enumerate().filter(|(id
 ```
 so it must be recomputed specifically for every given mask
  */
-pub fn match_2precomputed_histogram_(source: &[u8], src_stride: usize, hist_src: &[u32], hist_ref: &[f32], output: &mut [u8], out_stride: usize, source_mask:impl Fn(usize)->bool) {
+pub fn match_2precomputed_histogram_(source: &[u8], src_stride: usize, hist_src: &[u32], hist_ref: &[f32], output: &mut [u8], out_stride: usize, source_mask: impl Fn(usize) -> bool) {
     debug_assert_eq!(hist_ref.len(), 256);
     debug_assert_eq!(hist_src.len(), 256);
 
-    let sum_src:u32 = hist_src.iter().sum();
+    let sum_src: u32 = hist_src.iter().sum();
 
     let mut i_ref = 0;
     let mut stack: Vec<(/*reference value to replace source value*/u8, /*how much source value to replace*/usize)> = Vec::new();
@@ -140,7 +205,7 @@ pub fn match_2precomputed_histogram_(source: &[u8], src_stride: usize, hist_src:
     // If at this point i_ref < 256, that can only be due to floating-point imprecision. (which is unlikely as we use f64)
     // A few pixels might be improperly replaced but that's fine. Nobody will notice.
 
-    'outer: for ((idx,src_i), out_i) in source
+    'outer: for ((idx, src_i), out_i) in source
         .iter().step_by(src_stride).cloned()
         .enumerate()
         .zip(output.iter_mut().step_by(out_stride)) {
@@ -165,7 +230,7 @@ pub fn match_2precomputed_histogram_(source: &[u8], src_stride: usize, hist_src:
 
 pub fn blend(scalar1: f32, histogram1: &[f32], scalar2: f32, histogram2: &[f32]) -> Vec<f32> {
     let mut out = Vec::with_capacity(histogram1.len());
-    unsafe{out.set_len(out.capacity())}
+    unsafe { out.set_len(out.capacity()) }
     blend_(scalar1, histogram1, scalar2, histogram2, &mut out);
     out
 }
@@ -187,12 +252,12 @@ pub fn blend_(scalar1: f32, histogram1: &[f32], scalar2: f32, histogram2: &[f32]
 }
 
 /**shape == [height, width, channels]*/
-pub fn match_images(source: &[u8], src_shape: &[usize; 3], reference: &[u8], ref_shape: &[usize; 3], source_mask:impl Fn(usize)->bool) -> Box<[u8]> {
+pub fn match_images(source: &[u8], src_shape: &[usize; 3], reference: &[u8], ref_shape: &[usize; 3], source_mask: impl Fn(usize) -> bool) -> Box<[u8]> {
     assert_eq!(src_shape[2], ref_shape[2]);
     let channels = src_shape[2];
     let len = src_shape[0] * src_shape[1];
     let mut out = Vec::<u8>::with_capacity(len * channels);
-    unsafe{out.set_len(out.capacity())}
+    unsafe { out.set_len(out.capacity()) }
     for channel in 0..channels {
         match_histogram_(&source[channel..], channels, &reference[channel..], channels, &mut out[channel..], channels, &source_mask);
     }
@@ -200,18 +265,18 @@ pub fn match_images(source: &[u8], src_shape: &[usize; 3], reference: &[u8], ref
 }
 
 /**shape == [height, width, channels],  hist_ref:[channels, 256]*/
-pub fn match_precomputed_images(source: &[u8], src_shape: &[usize; 3], hist_ref: &[f32], source_mask:impl Fn(usize)->bool) -> Box<[u8]> {
+pub fn match_precomputed_images(source: &[u8], src_shape: &[usize; 3], hist_ref: &[f32], source_mask: impl Fn(usize) -> bool) -> Box<[u8]> {
     let hist_src = histograms(source, src_shape[2], &source_mask);
     match_2precomputed_images(source, src_shape, hist_src.flatten(), hist_ref, source_mask)
 }
 
 /**shape == [height, width, channels], hist_src:[channels,256], hist_ref:[channels, 256]*/
-pub fn match_2precomputed_images(source: &[u8], src_shape: &[usize; 3], hist_src: &[u32], hist_ref: &[f32], source_mask:impl Fn(usize)->bool) -> Box<[u8]> {
+pub fn match_2precomputed_images(source: &[u8], src_shape: &[usize; 3], hist_src: &[u32], hist_ref: &[f32], source_mask: impl Fn(usize) -> bool) -> Box<[u8]> {
     assert_eq!(hist_src.len(), hist_ref.len());
     let channels = src_shape[2];
     let len = src_shape[0] * src_shape[1];
     let mut out = Vec::<u8>::with_capacity(len * channels);
-    unsafe{out.set_len(out.capacity())}
+    unsafe { out.set_len(out.capacity()) }
     for channel in 0..channels {
         let hist_offset = channel * 256;
         match_2precomputed_histogram_(&source[channel..], channels, &hist_src[hist_offset..hist_offset + 256], &hist_ref[hist_offset..hist_offset + 256], &mut out[channel..], channels, &source_mask);
@@ -285,7 +350,7 @@ pub fn find_closest_n(hist_src: &[f32], batch: usize, references: &[f32]) -> (us
 }
 
 /**shape == [height, width, channels], references:[batch,channels,256]*/
-pub fn match_best_images(source: &[u8], src_shape: &[usize; 3], batch: usize, references: &[f32], source_mask:impl Fn(usize)->bool) -> (Box<[u8]>, usize, f32) {
+pub fn match_best_images(source: &[u8], src_shape: &[usize; 3], batch: usize, references: &[f32], source_mask: impl Fn(usize) -> bool) -> (Box<[u8]>, usize, f32) {
     assert_eq!(source.len(), src_shape.iter().product());
     let channels = src_shape[2];
     let hist_src = histograms(source, channels, &source_mask);
@@ -334,16 +399,16 @@ and `ratio>1`
  */
 pub fn find_histogram_anomaly<T: Copy + Zero + PartialOrd + Sub<Output=T> + Mul<Output=T> + FromUsize>(histogram: &[T], ratio: T) -> Vec<Range<isize>> {
     let mut out = Vec::new();
-    let mut x1:isize = -1;
+    let mut x1: isize = -1;
     let mut y1 = T::zero();
     let l = histogram.len() as isize;
     let mut to_be_pushed = x1..x1;
-    'outer: while x1+1 < l{
+    'outer: while x1 + 1 < l {
         let next_y = histogram[(x1 + 1) as usize];
         if next_y >= y1 {
             let mut y_max = next_y;
-            for x2 in x1 + 2..l+1 {
-                let y2 = if x2 < l{histogram[x2 as usize]}else{T::zero()};
+            for x2 in x1 + 2..l + 1 {
+                let y2 = if x2 < l { histogram[x2 as usize] } else { T::zero() };
                 if y2 > y_max {
                     y_max = y2;
                 }
@@ -357,14 +422,14 @@ pub fn find_histogram_anomaly<T: Copy + Zero + PartialOrd + Sub<Output=T> + Mul<
                         out.push(to_be_pushed);
                     }
                     to_be_pushed = x1..x2;
-                    break
+                    break;
                 }
             }
         }
         y1 = next_y;
-        x1+=1;
+        x1 += 1;
     }
-    if to_be_pushed.start < to_be_pushed.end{
+    if to_be_pushed.start < to_be_pushed.end {
         out.push(to_be_pushed);
     }
     out
@@ -391,13 +456,14 @@ pub fn find_n_histograms_anomaly<T: Copy + Zero + PartialOrd + Sub<Output=T> + M
 mod tests {
     use super::*;
     use rand::SeedableRng;
+    use crate::init_rand::InitRandWithCapacity;
 
 
     #[test]
     fn test6() {
         let s = vec![0, 1, 2];
         let r = vec![3, 4, 5];
-        let o = match_images(&s, &[s.len(), 1, 1], &r, &[r.len(), 1, 1], |_|true);
+        let o = match_images(&s, &[s.len(), 1, 1], &r, &[r.len(), 1, 1], |_| true);
         assert_eq!(o.as_ref(), &[3, 4, 5]);
     }
 
@@ -405,7 +471,7 @@ mod tests {
     fn test5() {
         let s = vec![0, 1, 2, 2, 5, 7, 3, 4, 6];
         let r = vec![3, 4, 5];
-        let o = match_images(&s, &[s.len(), 1, 1], &r, &[r.len(), 1, 1], |_|true);
+        let o = match_images(&s, &[s.len(), 1, 1], &r, &[r.len(), 1, 1], |_| true);
         assert_eq!(o.as_ref(), &[3, 3, 3, 4, 5, 5, 4, 4, 5]);
     }
 
@@ -414,14 +480,28 @@ mod tests {
         let o = find_n_histogram_anomaly(&[0., 0., 0.1, 0.1, 0.4, 0.1, 0.1, 0.1], 2.);
         assert_eq!(o, vec![3..5]);
     }
+
     #[test]
     fn test3() {
-        let o = find_n_histogram_anomaly(&[0.4,0., 0., 0.1, 0.1, 0.1, 0.1, 0.1], 2.);
+        let o = find_n_histogram_anomaly(&[0.4, 0., 0., 0.1, 0.1, 0.1, 0.1, 0.1], 2.);
         assert_eq!(o, vec![-1..1]);
     }
+
     #[test]
     fn test2() {
-        let o = find_n_histogram_anomaly(&[0.0,0., 0., 0.1, 0.1, 0.1, 0.1, 0.4], 2.);
+        let o = find_n_histogram_anomaly(&[0.0, 0., 0., 0.1, 0.1, 0.1, 0.1, 0.4], 2.);
         assert_eq!(o, vec![6..8]);
+    }
+
+    #[test]
+    fn test1() {
+        let mut a = vec![0.0, 1., 0., 3.0, 8.0, 0.0, 0.0, 2.];
+        let mut b = Vec::rand(256);
+        for i in rand_set(100,a.len()..256){
+            b[i] = 0.;
+        }
+        b[..a.len()].copy_from_slice(&a);
+        interpolate_gaps(&mut b);
+        assert_eq!(&b[..a.len()], &[0.5,1.,2.,3.,8.,6.0,4.0,2.]);
     }
 }

@@ -118,7 +118,6 @@ pub fn top_u_conv_(y_shape:&[usize;3], u:&[f32], s:&[f32], y:&mut [u8]){
             top_u_slice_(&u[u_from_j..u_to_j],&s[y_from_j..y_to_j],&mut y[y_from_j..y_to_j])
         }
     }
-
 }
 
 /**u is row-major. Element u[k,j]==0 means neuron k (row) can inhibit neuron j (column). */

@@ -23,6 +23,7 @@ chrono = "0.4.19"
 serde = "1.0.130"
 rand = "0.8.4"
 ciborium = "0.2.0"
+rand_distr = "0.4.3"
 
 [dependencies.pyo3]
 version = "0.13.2"

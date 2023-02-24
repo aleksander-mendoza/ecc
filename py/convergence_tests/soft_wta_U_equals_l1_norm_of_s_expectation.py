@@ -37,7 +37,7 @@ def run(x, learn):
     top_U = np.argpartition(U, kth=-k, axis=1)[:, -k:]
     binary_U = np.zeros_like(U)
     np.put_along_axis(binary_U, top_U, 1, 1)
-    ecc_py.soft_wta_top_u_real_(binary_U, s, y)
+    ecc_py.soft_wta_u_(binary_U, s, y)
     y = y.view(bool)
     if learn:
         W[np.ix_(x, y)] += W_epsilon
