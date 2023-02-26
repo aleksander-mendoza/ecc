@@ -4,7 +4,7 @@ import ecc_py
 import matplotlib.pyplot as plt
 import numpy as np
 from PIL import Image
-
+from tqdm import tqdm
 
 def open_img(path: str) -> np.ndarray:
     img = Image.open(path)
@@ -86,7 +86,7 @@ class Trainer:
         return img
 
     def train(self, num_images: int, num_patches_per_img: int):
-        for _ in range(num_images):
+        for _ in tqdm(range(num_images), desc="Training"):
             img = self.rand_img()
             for _ in range(num_patches_per_img):
                 x = self.rand_patch(img)
@@ -102,7 +102,7 @@ class Trainer:
         shape.append(m)
         sums = np.zeros(shape)
         counts = np.zeros(m)
-        for _ in range(num_images):
+        for _ in tqdm(range(num_images), desc="Evaluating"):
             img = self.rand_img()
             for _ in range(num_patches_per_img):
                 x = self.rand_patch(img)
