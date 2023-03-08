@@ -4,7 +4,7 @@ import numpy as np
 
 class STDP:
 
-    def __init__(self, n, m, threshold=5, w_step=0.0001, r_step=1. / 1024 * 2):
+    def __init__(self, n, m, norm=2, threshold=5, w_step=0.0001, r_step=1. / 1024 * 2):
         self.r_step = r_step
         self.W = np.random.rand(n, m)
         self.r = np.zeros(m)
@@ -12,20 +12,22 @@ class STDP:
         self.n = n
         self.threshold = threshold
         self.m = m
-        self.norm = np.sum if l == 1 else np.linalg.norm
+        self.norm = np.sum if norm == 1 else np.linalg.norm
         self.W /= self.norm(self.W, axis=2)
 
     def __call__(self, x, learn=False):
-        x = x.reshape(-1)
-        indices = x.argsort()[::-1]
+        """
+        :param x: list of indices. Each index encodes 1 bit in a sparse binary vector. The bits come in a certain order.
+        This order is defined by the order of indices in the list.
+        :param learn:
+        :return: a new list of indices.
+        """
         s = np.zeros(self.m)
-        for idx in indices:
-            s += self.W[idx] * x[idx]
+        for idx in x:
+            s += self.W[idx]
             k = s.argmax()
             if s[k] > self.threshold:
                 break
-
-
         if learn:
             self.r[k] -= self.r_step
             self.W[x, k] += self.w_step / x.sum()

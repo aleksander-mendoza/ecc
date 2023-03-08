@@ -38,7 +38,7 @@ def run(x, learn):
     if learn:
         W[np.ix_(x, y)] += W_epsilon
         W = W / W.sum(0)
-        sk = np.tile(s[y], (y_len,1)).T
+        sk = np.tile(s[y], (y_len, 1)).T
         sk_minus_sj = sk - s
         mask = sk_minus_sj > 0
         U[y] *= 1 - mask * U_epsilon

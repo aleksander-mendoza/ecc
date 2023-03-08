@@ -35,7 +35,7 @@ class RandPatch:
 
 class SampleOfCardinality:
 
-    def __init__(self, cardinality):
+    def __init__(self, cardinality:int):
         self.cardinality = cardinality
 
     def __call__(self, x: np.ndarray):
@@ -56,6 +56,7 @@ class SampleByThreshold:
         x = x > self.threshold
         return x
 
+
 class DatasetDir:
 
     def __init__(self, img_dir="../data/imgs"):
@@ -74,9 +75,9 @@ class DatasetDir:
 
 class Trainer:
 
-    def __init__(self, ecc_net, dataset, rand_patch: RandPatch, postprocess = None):
+    def __init__(self, ecc_net, dataset, rand_patch: RandPatch, preprocess = None):
         self.rand_patch = rand_patch
-        self.postprocess = postprocess
+        self.preprocess = preprocess
         self.dataset = dataset
         self.ecc_net = ecc_net
 
@@ -90,8 +91,8 @@ class Trainer:
             img = self.rand_img()
             for _ in range(num_patches_per_img):
                 x = self.rand_patch(img)
-                if self.postprocess is not None:
-                    x = self.postprocess(x)
+                if self.preprocess is not None:
+                    x = self.preprocess(x)
                 self.ecc_net(x, learn=True)
 
     def eval(self, num_images: int, num_patches_per_img: int):
@@ -106,8 +107,8 @@ class Trainer:
             img = self.rand_img()
             for _ in range(num_patches_per_img):
                 x = self.rand_patch(img)
-                if self.postprocess is not None:
-                    x = self.postprocess(x)
+                if self.preprocess is not None:
+                    x = self.preprocess(x)
                 y = self.ecc_net(x, learn=False)
                 sums[..., y] += x
                 counts[y] += 1
